@@ -33,6 +33,9 @@
  *                           Korean text in the form
  *   cjkPageFonts,           pages show CJK text in fonts the file does not
  *                           embed (a CJK font supplied embeds a substitute)
+ *   dark: { checked, pages },   of up to 6 pages spread through the file,
+ *                           how many were looked at and how many have a dark
+ *                           background (print.js: optimizeForPrint helps)
  * }
  *
  * Throws as flattenXfa does: PasswordError when the file needs a password,
@@ -46,6 +49,7 @@ import { extractXfa } from './xfa/extractor.js';
 import { scriptsIn } from './xfa/scripts.js';
 import { readerBarcode } from './xfa/barcodes.js';
 import { XfaLog } from './xfa/log.js';
+import { darkPages } from './print.js';
 
 const RADIO = 1 << 15, PUSH = 1 << 16;
 
@@ -92,6 +96,7 @@ export async function inspectPdf(input, { password = '' } = {}) {
     markup: { total: 0, types: {} },
     text: { otherScripts: false, cjk: false },
     cjkPageFonts: false,
+    dark: { checked: 0, pages: 0 },
   };
   const texts = [];
 
@@ -179,5 +184,10 @@ export async function inspectPdf(input, { password = '' } = {}) {
     }
     if (out.cjkPageFonts) break;
   }
+  // dark backgrounds, for a print-friendly copy
+  try {
+    const { checked, dark } = await darkPages(doc);
+    out.dark = { checked, pages: dark };
+  } catch { /* left at none */ }
   return out;
 }
