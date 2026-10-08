@@ -695,29 +695,31 @@ class PdfParser {
 
       const dict = value?.type === 'dict' ? value.value : {};
       const length = await this._resolveLength(dict.Length);
-      let rawBytes = this.r.readBytes(length);
-
+      const start = this.r.pos;
+      const bytes = this.r.bytes;
+      // "endstream" at p, after an optional EOL
+      const endsAt = p => {
+        if (bytes[p] === 0x0D) p++;
+        if (bytes[p] === 0x0A) p++;
+        return String.fromCharCode(...bytes.subarray(p, p + 9)) === 'endstream';
+      };
       // Some PDF generators write Length without counting the final \n before
-      // endstream. Check if the next non-whitespace bytes are 'endstream' —
-      // if not, read one more byte and check again (tolerates off-by-one).
-      {
-        const savedPos = this.r.pos;
-        // skip optional \r\n before endstream
-        let checkPos = this.r.pos;
-        if (this.r.bytes[checkPos] === 0x0D) checkPos++;
-        if (this.r.bytes[checkPos] === 0x0A) checkPos++;
-        const next9 = String.fromCharCode(...this.r.bytes.slice(checkPos, checkPos + 9));
-        if (next9 !== 'endstream') {
-          // Read one more byte and include it in rawBytes
-          const extra = this.r.readBytes(1);
-          const combined = new Uint8Array(rawBytes.length + extra.length);
-          combined.set(rawBytes);
-          combined.set(extra, rawBytes.length);
-          rawBytes = combined;
-        } else {
-          this.r.pos = savedPos; // restore — _decodeStream doesn't need pos
+      // endstream (tolerated: one byte more); when Length is missing or
+      // wrong otherwise, the data runs up to the next "endstream"
+      let end = start + length;
+      if (!endsAt(end)) {
+        if (endsAt(end + 1)) end++;
+        else {
+          const at = findBytes(bytes, 'endstream', start);
+          if (at >= 0) {
+            end = at;
+            if (bytes[end - 1] === 0x0A) end--;
+            if (bytes[end - 1] === 0x0D) end--;
+          }
         }
       }
+      let rawBytes = bytes.slice(start, Math.min(end, bytes.length));
+      this.r.pos = start + rawBytes.length;
 
       // Decrypt before decompressing if PDF is encrypted
       // (Encrypt dict itself and XRef streams are never encrypted)
@@ -730,14 +732,14 @@ class PdfParser {
         rawBytes = await this.decryptor.decryptStream(objNum, genNum, rawBytes);
       }
 
-      const streamBytes = await this._decodeStream(dict, rawBytes);
+      const { data: streamBytes, decoded: decodedFilters } = await this._decodeStream(dict, rawBytes);
 
       // Decrypt strings in the dict
       if (this.decryptor && !isXref && objNum !== this.encryptObjNum) {
         await this._decryptStringsInValue({ type: 'dict', value: dict }, objNum, genNum);
       }
 
-      return { objNum, dict, streamBytes };
+      return { objNum, dict, streamBytes, decodedFilters };
     }
 
     // Decrypt strings in non-stream objects
@@ -791,22 +793,28 @@ class PdfParser {
     return 0;
   }
 
+  // Undo the stream's filters in order, as far as they are understood:
+  // ASCII85, ASCIIHex, RunLength, LZW and Flate (and Crypt, already done).
+  // Decoding stops at the first other filter (DCT, JPX, CCITT, JBIG2: image
+  // data left as it is) and after a Flate or LZW filter with a predictor
+  // (its DecodeParms still describe the bytes). Returns the bytes and how
+  // many leading filters were undone (decodedFilters).
   async _decodeStream(dict, bytes) {
-    const filter = dict.Filter;
-    if (!filter) return bytes;
-
-    const filters = filter.type === 'array'
-      ? filter.value.map(f => f?.value || f)
-      : [filter?.value || filter];
-
-    let data = bytes;
-    for (const f of filters) {
-      if (f === 'FlateDecode') {
-        data = await inflate(data);
-      }
-      // Other filters (ASCII85, LZW, etc.) can be added here later
+    const filters = filterList(dict.Filter);
+    const parms = filterList(dict.DecodeParms);
+    let data = bytes, n = 0;
+    for (; n < filters.length; n++) {
+      const f = FILTER_ALIASES[filters[n]] ?? filters[n];
+      const p = parms[n]?.type === 'dict' ? parms[n].value : null;
+      if (f === 'FlateDecode') data = await inflate(data);
+      else if (f === 'LZWDecode') data = lzwDecode(data, p?.EarlyChange === undefined || resolveNumber(p.EarlyChange) !== 0);
+      else if (f === 'ASCII85Decode') data = ascii85Decode(data);
+      else if (f === 'ASCIIHexDecode') data = asciiHexDecode(data);
+      else if (f === 'RunLengthDecode') data = runLengthDecode(data);
+      else if (f !== 'Crypt') break;
+      if ((f === 'FlateDecode' || f === 'LZWDecode') && resolveNumber(p?.Predictor) > 1) { n++; break; }
     }
-    return data;
+    return { data, decoded: n };
   }
 
   // Get an object by number, using the xref table
@@ -870,6 +878,107 @@ function hexString(hex) {
   let str = '';
   for (let i = 0; i + 1 < hex.length; i += 2) str += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
   return { type: 'string', value: str };
+}
+
+// the first index of an ASCII string in bytes at or after from, or -1
+function findBytes(bytes, str, from) {
+  const first = str.charCodeAt(0);
+  outer: for (let i = bytes.indexOf(first, from); i >= 0; i = bytes.indexOf(first, i + 1)) {
+    for (let k = 1; k < str.length; k++) if (bytes[i + k] !== str.charCodeAt(k)) continue outer;
+    return i;
+  }
+  return -1;
+}
+
+// /Filter or /DecodeParms as a list (a single entry, an array, or none)
+function filterList(v) {
+  if (!v) return [];
+  const items = v.type === 'array' ? v.value : [v];
+  return items.map(x => (x?.type === 'name' ? x.value : x));
+}
+
+// the abbreviations inline images use, sometimes found on streams too
+const FILTER_ALIASES = { AHx: 'ASCIIHexDecode', A85: 'ASCII85Decode', LZW: 'LZWDecode', Fl: 'FlateDecode', RL: 'RunLengthDecode' };
+
+function ascii85Decode(bytes) {
+  const out = [];
+  let tuple = 0, count = 0;
+  let i = 0;
+  // an optional "<~" prefix
+  while (i < bytes.length && isWhitespace(bytes[i])) i++;
+  if (bytes[i] === 0x3C && bytes[i + 1] === 0x7E) i += 2;
+  for (; i < bytes.length; i++) {
+    const c = bytes[i];
+    if (c === 0x7E) break; // "~>"
+    if (isWhitespace(c)) continue;
+    if (c === 0x7A && count === 0) { out.push(0, 0, 0, 0); continue; } // "z"
+    if (c < 0x21 || c > 0x75) continue;
+    tuple = tuple * 85 + (c - 0x21);
+    if (++count === 5) {
+      out.push((tuple >>> 24) & 0xff, (tuple >>> 16) & 0xff, (tuple >>> 8) & 0xff, tuple & 0xff);
+      tuple = 0; count = 0;
+    }
+  }
+  if (count > 1) {
+    // a final partial group: pad with "u", keep count - 1 bytes
+    for (let k = count; k < 5; k++) tuple = tuple * 85 + 84;
+    const last = [(tuple >>> 24) & 0xff, (tuple >>> 16) & 0xff, (tuple >>> 8) & 0xff, tuple & 0xff];
+    out.push(...last.slice(0, count - 1));
+  }
+  return new Uint8Array(out);
+}
+
+function asciiHexDecode(bytes) {
+  const out = [];
+  let hi = -1;
+  for (const c of bytes) {
+    if (c === 0x3E) break; // ">"
+    const v = c >= 0x30 && c <= 0x39 ? c - 0x30 : c >= 0x41 && c <= 0x46 ? c - 0x37 : c >= 0x61 && c <= 0x66 ? c - 0x57 : -1;
+    if (v < 0) continue;
+    if (hi < 0) hi = v; else { out.push(hi * 16 + v); hi = -1; }
+  }
+  if (hi >= 0) out.push(hi * 16); // an odd final digit is followed by 0
+  return new Uint8Array(out);
+}
+
+function runLengthDecode(bytes) {
+  const out = [];
+  for (let i = 0; i < bytes.length;) {
+    const len = bytes[i++];
+    if (len === 128) break;
+    if (len < 128) { for (let k = 0; k <= len && i < bytes.length; k++) out.push(bytes[i++]); }
+    else { const b = bytes[i++]; for (let k = 0; k < 257 - len; k++) out.push(b); }
+  }
+  return new Uint8Array(out);
+}
+
+// PDF LZW: MSB-first codes of 9-12 bits, 256 clear, 257 end of data;
+// with EarlyChange (the default) the code width grows one code early
+function lzwDecode(bytes, earlyChange) {
+  const out = [];
+  let dict = [], width = 9, prev = null;
+  const reset = () => { dict = []; for (let k = 0; k < 256; k++) dict.push([k]); dict.push(null, null); width = 9; prev = null; };
+  reset();
+  let buf = 0, bits = 0;
+  for (let i = 0; i < bytes.length; i++) {
+    buf = (buf << 8) | bytes[i]; bits += 8;
+    while (bits >= width) {
+      const code = (buf >>> (bits - width)) & ((1 << width) - 1);
+      bits -= width; buf &= (1 << bits) - 1;
+      if (code === 256) { reset(); continue; }
+      if (code === 257) return new Uint8Array(out);
+      let entry;
+      if (code < dict.length && dict[code]) entry = dict[code];
+      else if (prev && code === dict.length) entry = [...prev, prev[0]];
+      else return new Uint8Array(out); // damaged data: keep what was decoded
+      out.push(...entry);
+      if (prev && dict.length < 4096) dict.push([...prev, entry[0]]);
+      prev = entry;
+      const next = dict.length + (earlyChange ? 1 : 0);
+      if (next >= (1 << width) && width < 12) width++;
+    }
+  }
+  return new Uint8Array(out);
 }
 
 // Helper: get a number from various forms it might appear in
