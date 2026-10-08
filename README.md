@@ -79,6 +79,22 @@ It throws if the file isn't a PDF or has no XFA. A form whose template can't be 
 
 `inspectPdf(input, { password })` reads a file without flattening it, so a caller can offer only the options that apply: its page count, whether it was encrypted or is a portfolio, its XFA form (dynamic or static, fields, filled values, scripts, and each barcode type with how Reader prints it: `'drawn'`, `'box'` or `'dropped'`), its AcroForm fields (by type, filled ones, JavaScript actions, `NeedAppearances`), the comments and markup that print (by type), text beyond Latin (`otherScripts`, `cjk`) and CJK page fonts the file does not embed. It throws as `flattenXfa` does; `PasswordError` and `UnsupportedEncryptionError` are exported for telling the cases apart. A file with neither XFA nor AcroForm fields has nothing to flatten but its markup (it may have been flattened already).
 
+### Print optimizer
+
+`optimizeForPrint(input, options?)` → `Promise<{ pdf, log, pageCount, inverted, recolored }>` makes a toner-saving print copy of any PDF. Dark page backgrounds turn white and dark panels with light text on them turn into a light tint, while the text and lines on them turn dark. Every other vector colour (text, lines, shapes, chart bars) becomes a grey of the same lightness. Pictures are left exactly as they are, and text drawn over a picture is not inverted.
+
+The file is flattened first, as `flattenXfa` flattens it, so form fields and comments print too. All of `flattenXfa`'s options apply. One more option:
+
+| | |
+|---|---|
+| `options.panels` | the grey (0 black to 1 white) that dark boxes smaller than the page print as, such as a black banner with white text. `0.92` (default) is a light tint that keeps the box visible for little toner; `1` prints them white |
+| `inverted` | dark backgrounds and panels that were lightened |
+| `recolored` | elements given a grey |
+
+Each page is read in painting order. A dark fill becomes a background when it covers most of the page, or when lighter text or shapes sit on it; whatever sits on a background that was inverted is inverted too. A dark fill with a lighter fill covering most of it is taken as a frame (a box border) and kept. Text and lines keep enough contrast to read against what is now under them, except text that had none to begin with (hidden white text stays hidden). Dark gradients used as backgrounds are dropped; other gradients are kept.
+
+[`test/print.html`](test/print.html) is a drop-a-PDF page that shows the original and the print copy side by side.
+
 ## How it works
 
 ```

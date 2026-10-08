@@ -32,6 +32,7 @@ import { collectWidgets } from './core/widgets.js';
 
 export { XfaLog, loadBundledFonts };
 export { inspectPdf } from './inspect.js';
+export { optimizeForPrint } from './print.js';
 export { PasswordError, UnsupportedEncryptionError } from './core/crypto.js';
 
 /**
@@ -240,7 +241,7 @@ async function stampSignatures(doc, pages, painted, log) {
 
 // ViewerPreferences entries that steer printing, as catalog source: page
 // scaling, duplex, tray by page size, copies and page ranges
-async function printPreferences(doc) {
+export async function printPreferences(doc) {
   const get = async v => (v?.type === 'ref' ? (await doc.getObject(v.num))?.value ?? null : v);
   const cat = (await doc.catalog())?.value?.value ?? {};
   const vp = await get(cat.ViewerPreferences);
