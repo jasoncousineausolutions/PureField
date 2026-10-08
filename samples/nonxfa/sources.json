@@ -1,0 +1,44 @@
+{
+  "pdfium-encrypted_hello_world_r5": {
+    "category": "aes256",
+    "source": "https://pdfium.googlesource.com/pdfium/+/refs/heads/main/testing/resources/encrypted_hello_world_r5.pdf",
+    "license": "PDFium test resources (BSD-3-Clause repository)",
+    "password": "hôtel"
+  },
+  "pdfium-encrypted_hello_world_r6": {
+    "category": "aes256",
+    "source": "https://pdfium.googlesource.com/pdfium/+/refs/heads/main/testing/resources/encrypted_hello_world_r6.pdf",
+    "license": "PDFium test resources (BSD-3-Clause repository)",
+    "password": "hôtel"
+  },
+  "pdfjs-issue12706": {
+    "category": "layers",
+    "source": "https://github.com/mozilla/pdf.js/blob/master/test/pdfs/issue12706.pdf",
+    "license": "pdf.js test corpus (Apache-2.0 repository; files from bug reports)"
+  },
+  "pdfjs-issue14307": {
+    "category": "acroform-js",
+    "source": "https://github.com/mozilla/pdf.js/blob/master/test/pdfs/issue14307.pdf",
+    "license": "pdf.js test corpus (Apache-2.0 repository; files from bug reports)"
+  },
+  "pdfjs-issue16021": {
+    "category": "annotations-no-appearance",
+    "source": "https://github.com/mozilla/pdf.js/blob/master/test/pdfs/issue16021.pdf",
+    "license": "pdf.js test corpus (Apache-2.0 repository; files from bug reports)"
+  },
+  "pdfjs-issue11915": {
+    "category": "fonts-not-embedded",
+    "source": "https://github.com/mozilla/pdf.js/blob/master/test/pdfs/issue11915.pdf",
+    "license": "pdf.js test corpus (Apache-2.0 repository; files from bug reports)"
+  },
+  "pdfjs-issue19176": {
+    "category": "userunit",
+    "source": "https://github.com/mozilla/pdf.js/blob/master/test/pdfs/issue19176.pdf",
+    "license": "pdf.js test corpus (Apache-2.0 repository; files from bug reports)"
+  },
+  "pdfdiff-ColorDodge": {
+    "category": "viewer-rendering",
+    "source": "https://github.com/pdf-association/pdf-differences/tree/main/ColorBurn-ColorDodge",
+    "license": "PDF Association pdf-differences (Apache-2.0)"
+  }
+}

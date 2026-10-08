@@ -1,0 +1,6 @@
+node_modules/
+out/
+# an optional CJK font supplied locally (README: options.fonts)
+fonts/CJK.ttf
+.claude/worktrees/
+__pycache__/

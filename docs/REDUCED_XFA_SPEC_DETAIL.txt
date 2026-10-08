@@ -1,0 +1,348 @@
+REDUCED XFA SPEC — LONG-FORM SECTIONS (5–10)
+
+These are the original long-form versions of sections 5–10. REDUCED_XFA_SPEC.txt is the condensed
+version. This file keeps the examples, tables and edge-case rules the condensed version left out.
+The long-form versions of sections 1–4 were not provided.
+
+
+============================================================
+5. DATASETS BINDING
+============================================================
+
+Layout never reads xfa:data. Binding does. This stage merges the template prototype with the data
+root from the extraction grid and emits the instance tree that flow consumes. It does not format
+values, paint boxes, or run FormCalc.
+
+The data root is the first element child of xfa:data that is not in the XFA data namespace. If
+xfa:data is missing or empty, the data root is an empty record and every match fails closed.
+
+Match modes
+
+A bind child changes how a template node consumes data. The default is match="once".
+
+  match     Consumes  Resolution
+  once      yes       First unbound child of the current data node with the same local name.
+  dataRef   yes       The node named by ref. Not required to be a direct child.
+  global    yes       First unbound node of that local name in document order anywhere under the data root.
+  none      no        Template default only. The node is still instantiated.
+
+Name compare is local-name, case-sensitive, namespace-insensitive. A data element in a default
+namespace still matches a template name. Attributes are not candidates for once or global.
+
+ref is a SOM path. $.a.b is relative to the current data node. An unqualified a.b is looked up
+under the current data node first, then under each ancestor in turn (SOM implicit scoping, as
+pdf.js does); without that rule the firstName example below would dangle. $record.a.b and
+xfa.datasets.data.form1.a.b are absolute from the data root. $ alone is the current data node.
+Anything else is relative. A ref that does not resolve binds nothing and logs XFA_BIND_DANGLING. It
+does not fall back to name match.
+
+  <subform name="form1">
+    <subform name="header">
+      <field name="firstName">
+        <bind match="dataRef" ref="header.firstName"/>
+      </field>
+      <field name="issued">
+        <bind match="once"/>
+      </field>
+    </subform>
+    <subform name="line">
+      <occur min="1" max="-1"/>
+      <field name="sku"/>
+      <field name="note">
+        <bind match="none"/>
+        <value><text>n/a</text></value>
+      </field>
+    </subform>
+    <field name="office">
+      <bind match="global"/>
+    </field>
+  </subform>
+
+  <xfa:data xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <form1>
+      <header>
+        <firstName>Ada</firstName>
+        <issued>2024-11-02</issued>
+      </header>
+      <line><sku>A-14</sku><qty>2</qty></line>
+      <line><sku>B-02</sku><qty>1</qty></line>
+      <office>Springfield</office>
+    </form1>
+  </xfa:data>
+
+firstName binds through dataRef. issued binds by name against the header data node once header has
+become the current node. note stays n/a. office binds by global name even if the field is not
+nested under a matching subform. qty is unbound data and is dropped.
+
+Scope
+
+Binding is a depth-first walk of the template. Each subform or area that binds a data element
+pushes that element as the current data node for its children, then pops it.
+
+A subform with match="once" that finds no data element still pushes a synthetic empty data node if
+it is instantiated. Children then fail their own matches and take template defaults. A subform with
+match="none" does not push. Its children bind against the parent's data node, which is how a purely
+visual wrapper stays transparent.
+
+area never binds. It does not push a data node. exclGroup binds like a field: one value for the
+group, and the member fields do not each consume a data node. subformSet does not bind. Its members
+are walked in document order and each binds on its own.
+
+Occurrence
+
+occur is applied at the binding of a subform, before its children walk.
+
+  1. Collect unbound sibling data elements of the current node with that local name. For dataRef,
+     collect matches of the ref instead. For global, collect unbound matches under the data root.
+  2. Let n be that count.
+  3. Instance count is clamp(max(n, min, initial-if-record-empty), max). max="-1" means no ceiling.
+     Omitted min is 1 (0 only for pageArea and pageSet). Omitted max equals min when min is
+     given, else 1. A max below min is raised to min, and an omitted max is never below initial
+     (Designer's min="0" initial="1" gives max 1). Omitted initial is 1 for the root subform,
+     else min. (Corrected against pdf.js; the earlier text said nested min defaults to 0.)
+  4. Bind the first count data nodes in document order, one per instance. Further data nodes stay
+     unbound.
+  5. Instances beyond n receive a synthetic empty data node.
+
+An empty instance is real. Layout must not drop it. initial matters only when the data root itself
+is absent; it does not pad a record that exists but lacks that child.
+
+Field value
+
+A bound field stores the raw value, not the display value.
+
+  - Data value is the concatenated text of the bound element, with descendant element text
+    ignored. Mixed content keeps only direct text nodes.
+  - Empty element, missing text, and a failed match are different. Failed match uses the template
+    value/text, then value/exData plain text, then "". An empty element binds "" and does not use
+    the template default.
+  - xsi:nil="true" binds null. Picture-clause null formatting, later, is the only consumer. This
+    stage stores null.
+  - Attribute bind is dataRef only, path tail @name or .#name. The value is the attribute string.
+
+Choice lists bind the save value. Display text is not chosen here. Check marks bind the raw
+on-value. Neither is interpreted.
+
+Picture clauses, calculate, and validate do not run. A field whose only content would have come
+from a script paints its template default and logs XFA_BIND_SCRIPT_SKIPPED.
+
+What this stage emits
+
+The instance tree layout already expects, plus the raw value on each leaf:
+
+  {
+    som: "form1.line[1].sku",
+    templateName: "sku",
+    index: 1,
+    raw: "B-02",
+    bound: true,
+    dataPath: "form1.line[1].sku"
+  }
+
+raw is a string or null. bound: false means the template default was used. Downstream formatting
+may replace raw with a display string. It must not change dataPath.
+
+
+============================================================
+6. PICTURE CLAUSES
+============================================================
+
+Binding stores a raw string or null. This stage turns that into the display string typography
+paints. It does not rebind, and it does not parse FormCalc.
+
+The clause lives on the field:
+
+  <field name="issued">
+    <format>
+      <picture>date{YYYY-MM-DD}|null{}</picture>
+    </format>
+    <ui>
+      <dateTimeEdit>
+        <picture>date{MMM D, YYYY}</picture>
+      </dateTimeEdit>
+    </ui>
+  </field>
+
+The display clause is format/picture. ui/*/picture is the edit pattern, shown only while a
+user types, so a flattener does not paint it (corrected against Acrobat prints: a field whose
+only picture is null{'00000'} under ui prints blank). bind/picture is the data-side clause.
+
+A clause is a category, then alternates split on |. The first alternate that accepts the raw value
+wins. A quoted alternate ('n/a') is a literal and always accepts.
+
+  Category  Accepts                                      Reduced symbols
+  date{…}   Canonical YYYY-MM-DD, or YYYY-MM-DDThh:mm:ss  YYYY YY MMMM MMM MM DD D JJJ
+  time{…}   Canonical hh:mm:ss                           HH hh MM SS A
+  num{…}    Canonical number, . decimal, no grouping     9 z Z . , % $
+  text{…}   Any string                                   A letter, 9 digit, X any, other chars literal
+  null{}    null only                                    Paints empty, or the literal in that alternate
+  zero{}    Numeric zero                                 Same
+
+Canonical form is the data contract. 2024-11-02 is a date. 11/02/2024 is not, unless a leading
+date alternate fails and a text alternate exists. Locale month names come from the extracted
+localeSet, else the built-in en_US set. Numeric grouping and decimal characters come from that same
+locale. The canonical decimal point remains . on input.
+
+Unsupported symbols (EEE, imperial eras, 8) paint the raw string and log XFA_PICTURE_UNSUPPORTED. A
+clause that matches nothing paints the raw string.
+
+null with no null{} alternate paints empty. Numeric zero with no zero{} alternate uses the num
+alternate, so z,zz9.99 paints 0.00.
+
+
+============================================================
+7. FIELD CHROME
+============================================================
+
+Chrome is the box around the display string. It is painted after layout, before text. Caption
+reserve changes the value rectangle typography already expects.
+
+Border
+
+  <border>
+    <edge thickness="0.5pt"/>
+    <edge thickness="0.5pt"/>
+    <edge thickness="0.5pt"/>
+    <edge thickness="0.5pt"/>
+    <corner radius="1mm"/>
+    <fill><color value="255,255,255"/></fill>
+  </border>
+
+Edges are top, right, bottom, left. One edge broadcasts to all four. presence="hidden" skips that
+edge. Thickness uses the unit matrix; an edge with no thickness is 0.5pt. A missing border element
+paints no stroke, on a field or a draw. Most Designer fields draw their visible box from the border
+inside the ui widget (ui/textEdit/border etc.), so read both. (Corrected against pdf.js; the earlier
+text painted a default 0.5pt border on every field.)
+
+Corners apply one radius to all four if a single corner is present. Join styles other than a square
+or rounded corner are painted square. Fill is the solid color@value behind the value and caption.
+Gradients and patterns paint the first color stop, or white, and log XFA_FILL_FALLBACK.
+
+Caption reserve
+
+caption@placement is left (default), right, top, bottom, or inline. caption@reserve is the strip
+taken out of the field box before the value rectangle is handed to typography. An omitted, zero or
+negative reserve means the caption's measured width (left, right, inline) or height (top, bottom).
+
+  <field name="sku" w="40mm" h="9mm">
+    <caption placement="left" reserve="18mm">
+      <value><text>SKU</text></value>
+    </caption>
+  </field>
+
+The caption paints in its strip with its own font, else the field font. The value rectangle is the
+remainder. Comb fields split that remainder, not the whole field.
+
+UI leaves
+
+  ui child                    Flattened appearance
+  textEdit                    Value string. multiLine="1" may wrap.
+  numericEdit, dateTimeEdit   Value string after the picture clause. No spinner.
+  passwordEdit                One * per raw character.
+  checkButton                 A box of checkButton@size (default 10pt), mark if the raw value equals
+                              the on value: items[0] is on, items[1] off, items[2] neutral; with no
+                              items, 1 is on. Mark follows checkButton@mark, default check. shape
+                              other than square is still a square box.
+  choiceList                  The display item whose save value equals raw. No popup.
+  imageEdit                   The embedded image, rules below.
+  signature, barcode          The caption or the field name. Do not invent a glyph. Log XFA_UI_OPAQUE.
+
+textEdit@comb="8" divides the value rectangle into eight equal cells and paints one character per
+cell, centered. Picture literals occupy a cell.
+
+items has two parallel lists. One items element is both save and display. Two items elements are
+save, then display. Bind stored the save value. Chrome looks up the display string. No match paints
+the raw value.
+
+exclGroup paints one mark, on the member whose value equals the group raw value. Other members
+paint an empty box.
+
+
+============================================================
+8. DRAWS
+============================================================
+
+A draw is boilerplate. It binds no data unless it carries a bind, which the reduced flattener
+ignores. Its painted form is the single child of value.
+
+  value child   Paint
+  text, exData  Typography, into the draw box.
+  rectangle     Border stroke and fill over the draw box.
+  line          A stroke from the box edge named by slope (\ or /).
+  arc           A circular sector in the box. sweepAngle omitted is 360.
+  image         An image, rules below.
+
+  <draw name="rule" x="0" y="26mm" w="190mm" h="0.5pt">
+    <value>
+      <line slope="\"/>
+    </value>
+  </draw>
+
+image@href is resolved only if it is a fragment inside the template packet or a data: URI. External
+http and file hrefs paint nothing and log XFA_IMAGE_EXTERNAL. aspect="fit" letterboxes inside the
+box. aspect="none" stretches. aspect="actual" paints at intrinsic size from the top-left and clips.
+
+Images embedded in the shell PDF are not consulted. If the XFA image is absent, the draw is empty.
+
+
+============================================================
+9. STATIC VERSUS DYNAMIC
+============================================================
+
+The two file classes do not share a page source.
+
+  Signal                                                                 Class
+  Catalog /NeedsRendering true                                           dynamic (primary)
+  config dynamicRender="required"                                        dynamic (secondary)
+  Any bound occur that emitted more instances than the template prototype dynamic (secondary)
+  Otherwise                                                              static
+
+pdf.js renders XFA only when NeedsRendering is true; static files are shown from their shell pages.
+
+Dynamic pages are synthesized. For each placed page, emit a PDF page at the sealed pageArea size,
+paint draws and field chrome from the instance tree, and do not copy the shell page content. The
+shell of a dynamic file is a blank carrier.
+
+Static pages keep the shell content stream. It already contains boilerplate and the design-time
+field appearance. Paint only the display string and the check mark, into the sealed value
+rectangle, with a white fill behind the string so the design-time placeholder is covered. Do not
+repaint borders. Do not synthesize a second copy of the draws.
+
+A static file whose shell pages have no content stream is treated as dynamic and logged
+XFA_STATIC_EMPTY.
+
+Both classes drop /XFA, /NeedsRendering, and the AcroForm field dictionary on output. The result is
+page content, not a form.
+
+
+============================================================
+10. MEASUREMENT
+============================================================
+
+Wrapping, caption reserve="-1", vAlign="middle", and comb cell fit all require a width function.
+The function is the substituted face, not the requested face.
+
+  widthPt = face.widthOf(displayString) * (sizePt / unitsPerEm) * hx
+
+hx is the horizontal scale fraction from typography. Letter spacing adds Tc * sizePt after each
+glyph except the last. Vertical scale does not change width.
+
+Line breaking uses this width against the value-rectangle width. Break on spaces. A token wider
+than the rectangle is one line and clips. Do not hyphenate.
+
+The em box used for baseline placement is the substituted face's ascender and descender at
+sizePt * vx. vAlign="middle" centers that em box in the value rectangle, then the seal converts the
+baseline to PDF user space.
+
+Myriad Pro measured as Helvetica will not break on Acrobat's boundaries. That error is accepted. It
+is not corrected by scaling the string to the design width: stretching a run to match a missing
+face's advance destroys the picture-clause text. Log XFA_METRIC_SUBSTITUTE once per face per
+document, not once per field.
+
+
+============================================================
+LOG CODES REFERENCED
+============================================================
+
+XFA_BIND_DANGLING, XFA_BIND_SCRIPT_SKIPPED, XFA_PICTURE_UNSUPPORTED, XFA_FILL_FALLBACK,
+XFA_UI_OPAQUE, XFA_IMAGE_EXTERNAL, XFA_STATIC_EMPTY, XFA_METRIC_SUBSTITUTE

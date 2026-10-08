@@ -1,0 +1,14 @@
+{
+  "name": "purefield",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Browser JavaScript library that flattens XFA PDFs into ordinary PDFs",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"test/node/*.test.js\""
+  },
+  "devDependencies": {
+    "@xmldom/xmldom": "^0.9.12"
+  }
+}

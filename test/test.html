@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Purefield test harness</title>
+  <style>
+    body { font-family: monospace; padding: 20px; background: #1e1e1e; color: #d4d4d4; }
+    h1 { color: #9cdcfe; font-size: 1.1em; }
+    #drop { border: 2px dashed #555; padding: 40px; text-align: center; margin-bottom: 20px;
+            color: #888; cursor: pointer; border-radius: 6px; }
+    #drop.over { border-color: #9cdcfe; color: #9cdcfe; }
+    #output { white-space: pre-wrap; background: #252526; padding: 16px;
+              border-radius: 4px; font-size: 0.85em; line-height: 1.5; }
+    .ok   { color: #4ec9b0; }
+    .err  { color: #f48771; }
+    .info { color: #9cdcfe; }
+    .warn { color: #ce9178; }
+    iframe { width: 100%; height: 80vh; border: 0; margin-top: 16px; background: #fff; }
+  </style>
+</head>
+<body>
+
+<h1>Purefield — test harness</h1>
+
+<div id="drop">Drop an XFA PDF here, or click to choose</div>
+<input type="file" id="fileInput" accept=".pdf" style="display:none">
+
+<div id="output">Waiting for PDF...</div>
+<iframe id="preview" hidden></iframe>
+
+<script type="module">
+  import { flattenXfa } from '../src/index.js';
+
+  const out = document.getElementById('output');
+  const preview = document.getElementById('preview');
+  const drop = document.getElementById('drop');
+  const input = document.getElementById('fileInput');
+
+  function log(msg, cls = '') {
+    const span = document.createElement('span');
+    if (cls) span.className = cls;
+    span.textContent = msg + '\n';
+    out.appendChild(span);
+  }
+
+  async function run(file) {
+    out.textContent = '';
+    log(`File: ${file.name} (${file.size} bytes)`, 'info');
+    try {
+      const t0 = performance.now();
+      const { pdf, log: xfaLog, pageCount, dynamic } = await flattenXfa(await file.arrayBuffer());
+      log(`✓ Flattened in ${(performance.now() - t0).toFixed(0)} ms: ${pageCount} page(s), ${dynamic ? 'dynamic' : 'static'} form, ${pdf.length} bytes`, 'ok');
+
+      const counts = {};
+      for (const e of xfaLog.entries) counts[e.code] = (counts[e.code] || 0) + 1;
+      for (const [code, n] of Object.entries(counts)) log(`  ${code} ×${n}`, 'warn');
+      for (const e of xfaLog.entries.slice(0, 200)) log(`  [${e.level}] ${e.code}: ${e.message}`);
+
+      const url = URL.createObjectURL(new Blob([pdf], { type: 'application/pdf' }));
+      preview.src = url;
+      preview.hidden = false;
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = file.name.replace(/\.pdf$/i, '') + '-flat.pdf';
+      a.textContent = `Download ${a.download}`;
+      out.appendChild(a);
+    } catch (err) {
+      log('✗ Error: ' + err.message, 'err');
+      log(err.stack, 'err');
+      console.error(err);
+    }
+  }
+
+  drop.addEventListener('click', () => input.click());
+  input.addEventListener('change', () => input.files[0] && run(input.files[0]));
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault();
+    drop.classList.remove('over');
+    if (e.dataTransfer.files[0]) run(e.dataTransfer.files[0]);
+  });
+</script>
+
+</body>
+</html>

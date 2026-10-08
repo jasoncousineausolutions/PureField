@@ -1,0 +1,7 @@
+{
+  "_about": "Reader prints in acrobat/ that are not a fair target. skip: leave out of scoring (Reader failed; do not try to match it). rotated: Reader printed the page turned 90 degrees; compare after rotating. excluded: left out of testing by choice. blank: Reader printed an empty page (a blank page on both sides scores as a match).",
+  "itext-empty-xfa": {
+    "blank": true,
+    "reason": "Reader printed a blank page; the form has no root subform"
+  }
+}

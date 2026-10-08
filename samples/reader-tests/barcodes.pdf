@@ -1,0 +1,132 @@
+%PDF-1.7
+%âãÏÓ
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /NeedsRendering true /Extensions << /ADBE << /BaseVersion /1.7 /ExtensionLevel 8 >> >> /AcroForm << /Fields [] /XFA [(preamble) 6 0 R (config) 7 0 R (template) 8 0 R (datasets) 9 0 R (postamble) 10 0 R] >> >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>
+endobj
+6 0 obj
+<<  /Length 85 >>
+stream
+<?xml version="1.0" encoding="UTF-8"?>
+<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">
+endstream
+endobj
+7 0 obj
+<<  /Length 328 >>
+stream
+<config xmlns="http://www.xfa.org/schema/xci/3.0/"><present><pdf><version>1.7</version><adobeExtensionLevel>8</adobeExtensionLevel><renderPolicy>client</renderPolicy><scriptModel>XFA</scriptModel><interactive>1</interactive></pdf></present><acrobat><acrobat7><dynamicRender>required</dynamicRender></acrobat7></acrobat></config>
+endstream
+endobj
+8 0 obj
+<<  /Length 9789 >>
+stream
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/"><?formServer defaultPDFRenderFormat acrobat10.0dynamic?><subform name="form1" layout="tb" locale="en_US">
+  <pageSet><pageArea name="P1"><contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/><medium stock="letter" short="8.5in" long="11in"/></pageArea></pageSet>
+  <subform name="body" layout="tb" w="7.5in"><draw name="title" w="7.5in" h="20pt"><font typeface="Arial" size="12pt" weight="bold"/><value><text>jcs-pdf reader test: barcodes</text></value></draw>
+  <subform name="row0" layout="tb" w="7.5in"><draw name="label0" w="7.5in" h="14pt"><font typeface="Arial" size="9pt"/><value><text>1. aztec: Hello Aztec 12345</text></value></draw>
+   <field name="b0" w="1.5in" h="1.5in"><ui><barcode type="aztec"/></ui><font typeface="Arial" size="8pt"/><value><text>Hello Aztec 12345</text></value></field>
+   <draw name="gap0" w="7.5in" h="12pt"/></subform>
+<subform name="row1" layout="tb" w="7.5in"><draw name="label1" w="7.5in" h="14pt"><font typeface="Arial" size="9pt"/><value><text>2. aztec: jcs-pdf Aztec test: The quick brown fox jumps over the lazy dog 0123456789</text></value></draw>
+   <field name="b1" w="1.5in" h="1.5in"><ui><barcode type="aztec"/></ui><font typeface="Arial" size="8pt"/><value><text>jcs-pdf Aztec test: The quick brown fox jumps over the lazy dog 0123456789</text></value></field>
+   <draw name="gap1" w="7.5in" h="12pt"/></subform>
+<subform name="row2" layout="tb" w="7.5in"><draw name="label2" w="7.5in" h="14pt"><font typeface="Arial" size="9pt"/><value><text>3. rss14: 0950110153001</text></value></draw>
+   <field name="b2" w="4in" h="0.8in"><ui><barcode type="rss14"/></ui><font typeface="Arial" size="8pt"/><value><text>0950110153001</text></value></field>
+   <draw name="gap2" w="7.5in" h="12pt"/></subform>
+<subform name="row3" layout="tb" w="7.5in"><draw name="label3" w="7.5in" h="14pt"><font typeface="Arial" size="9pt"/><value><text>4. rss14Truncated: 0950110153001</text></value></draw>
+   <field name="b3" w="4in" h="0.8in"><ui><barcode type="rss14Truncated"/></ui><font typeface="Arial" size="8pt"/><value><text>0950110153001</text></value></field>
+   <draw name="gap3" w="7.5in" h="12pt"/></subform>
+<subform name="row4" layout="tb" w="7.5in"><draw name="label4" w="7.5in" h="14pt"><font typeface="Arial" size="9pt"/><value><text>5. rss14Stacked: 0950110153001</text></value></draw>
+   <field name="b4" w="4in" h="0.8in"><ui><barcode type="rss14Stacked"/></ui><font typeface="Arial" size="8pt"/><value><text>0950110153001</text></value></field>
+   <draw name="gap4" w="7.5in" h="12pt"/></subform>
+<subform name="row5" layout="tb" w="7.5in"><draw name="label5" w="7.5in" h="14pt"><font typeface="Arial" size="9pt"/><value><text>6. rss14StackedOmni: 0950110153001</text></value></draw>
+   <field name="b5" w="4in" h="0.8in"><ui><barcode type="rss14StackedOmni"/></ui><font typeface="Arial" size="8pt"/><value><text>0950110153001</text></value></field>
+   <draw name="gap5" w="7.5in" h="12pt"/></subform>
+<subform name="row6" layout="tb" w="7.5in"><draw name="label6" w="7.5in" h="14pt"><font typeface="Arial" size="9pt"/><value><text>7. rss14Limited: 1501234567890</text></value></draw>
+   <field name="b6" w="4in" h="0.8in"><ui><barcode type="rss14Limited"/></ui><font typeface="Arial" size="8pt"/><value><text>1501234567890</text></value></field>
+   <draw name="gap6" w="7.5in" h="12pt"/></subform>
+<subform name="row7" layout="tb" w="7.5in"><draw name="label7" w="7.5in" h="14pt"><font typeface="Arial" size="9pt"/><value><text>8. rss14Expanded: (01)98898765432106(3202)012345(15)991231</text></value></draw>
+   <field name="b7" w="4in" h="0.8in"><ui><barcode type="rss14Expanded"/></ui><font typeface="Arial" size="8pt"/><value><text>(01)98898765432106(3202)012345(15)991231</text></value></field>
+   <draw name="gap7" w="7.5in" h="12pt"/></subform>
+<subform name="row8" layout="tb" w="7.5in"><draw name="label8" w="7.5in" h="14pt"><font typeface="Arial" size="9pt"/><value><text>9. postAUSStandard: 39987520</text></value></draw>
+   <field name="b8" w="4in" h="0.8in"><ui><barcode type="postAUSStandard"/></ui><font typeface="Arial" size="8pt"/><value><text>39987520</text></value></field>
+   <draw name="gap8" w="7.5in" h="12pt"/></subform>
+<subform name="row9" layout="tb" w="7.5in"><draw name="label9" w="7.5in" h="14pt"><font typeface="Arial" size="9pt"/><value><text>10. postAUSReplyPaid: 12345678</text></value></draw>
+   <field name="b9" w="4in" h="0.8in"><ui><barcode type="postAUSReplyPaid"/></ui><font typeface="Arial" size="8pt"/><value><text>12345678</text></value></field>
+   <draw name="gap9" w="7.5in" h="12pt"/></subform>
+<subform name="row10" layout="tb" w="7.5in"><draw name="label10" w="7.5in" h="14pt"><font typeface="Arial" size="9pt"/><value><text>11. postAUSCust2: 3998752012</text></value></draw>
+   <field name="b10" w="4in" h="0.8in"><ui><barcode type="postAUSCust2"/></ui><font typeface="Arial" size="8pt"/><value><text>3998752012</text></value></field>
+   <draw name="gap10" w="7.5in" h="12pt"/></subform>
+<subform name="row11" layout="tb" w="7.5in"><draw name="label11" w="7.5in" h="14pt"><font typeface="Arial" size="9pt"/><value><text>12. postAUSCust3: 39987520AB12</text></value></draw>
+   <field name="b11" w="4in" h="0.8in"><ui><barcode type="postAUSCust3"/></ui><font typeface="Arial" size="8pt"/><value><text>39987520AB12</text></value></field>
+   <draw name="gap11" w="7.5in" h="12pt"/></subform>
+<subform name="row12" layout="tb" w="7.5in"><draw name="label12" w="7.5in" h="14pt"><font typeface="Arial" size="9pt"/><value><text>13. code2Of5Matrix: 87654321</text></value></draw>
+   <field name="b12" w="4in" h="0.8in"><ui><barcode type="code2Of5Matrix"/></ui><font typeface="Arial" size="8pt"/><value><text>87654321</text></value></field>
+   <draw name="gap12" w="7.5in" h="12pt"/></subform>
+<subform name="row13" layout="tb" w="7.5in"><draw name="label13" w="7.5in" h="14pt"><font typeface="Arial" size="9pt"/><value><text>14. ean13add2: 9771384524017+12</text></value></draw>
+   <field name="b13" w="4in" h="0.8in"><ui><barcode type="ean13add2"/></ui><font typeface="Arial" size="8pt"/><value><text>9771384524017+12</text></value></field>
+   <draw name="gap13" w="7.5in" h="12pt"/></subform>
+<subform name="row14" layout="tb" w="7.5in"><draw name="label14" w="7.5in" h="14pt"><font typeface="Arial" size="9pt"/><value><text>15. ean13add5: 9780877799306+54321</text></value></draw>
+   <field name="b14" w="4in" h="0.8in"><ui><barcode type="ean13add5"/></ui><font typeface="Arial" size="8pt"/><value><text>9780877799306+54321</text></value></field>
+   <draw name="gap14" w="7.5in" h="12pt"/></subform>
+<subform name="row15" layout="tb" w="7.5in"><draw name="label15" w="7.5in" h="14pt"><font typeface="Arial" size="9pt"/><value><text>16. ean8add2: 1234567+12</text></value></draw>
+   <field name="b15" w="4in" h="0.8in"><ui><barcode type="ean8add2"/></ui><font typeface="Arial" size="8pt"/><value><text>1234567+12</text></value></field>
+   <draw name="gap15" w="7.5in" h="12pt"/></subform>
+<subform name="row16" layout="tb" w="7.5in"><draw name="label16" w="7.5in" h="14pt"><font typeface="Arial" size="9pt"/><value><text>17. ean8add5: 1234567+12345</text></value></draw>
+   <field name="b16" w="4in" h="0.8in"><ui><barcode type="ean8add5"/></ui><font typeface="Arial" size="8pt"/><value><text>1234567+12345</text></value></field>
+   <draw name="gap16" w="7.5in" h="12pt"/></subform>
+<subform name="row17" layout="tb" w="7.5in"><draw name="label17" w="7.5in" h="14pt"><font typeface="Arial" size="9pt"/><value><text>18. upcAadd2: 01234567890+24</text></value></draw>
+   <field name="b17" w="4in" h="0.8in"><ui><barcode type="upcAadd2"/></ui><font typeface="Arial" size="8pt"/><value><text>01234567890+24</text></value></field>
+   <draw name="gap17" w="7.5in" h="12pt"/></subform>
+<subform name="row18" layout="tb" w="7.5in"><draw name="label18" w="7.5in" h="14pt"><font typeface="Arial" size="9pt"/><value><text>19. upcAadd5: 61414123441+12345</text></value></draw>
+   <field name="b18" w="4in" h="0.8in"><ui><barcode type="upcAadd5"/></ui><font typeface="Arial" size="8pt"/><value><text>61414123441+12345</text></value></field>
+   <draw name="gap18" w="7.5in" h="12pt"/></subform>
+<subform name="row19" layout="tb" w="7.5in"><draw name="label19" w="7.5in" h="14pt"><font typeface="Arial" size="9pt"/><value><text>20. upcEadd2: 1234567+12</text></value></draw>
+   <field name="b19" w="4in" h="0.8in"><ui><barcode type="upcEadd2"/></ui><font typeface="Arial" size="8pt"/><value><text>1234567+12</text></value></field>
+   <draw name="gap19" w="7.5in" h="12pt"/></subform>
+<subform name="row20" layout="tb" w="7.5in"><draw name="label20" w="7.5in" h="14pt"><font typeface="Arial" size="9pt"/><value><text>21. upcEadd5: 1234567+12345</text></value></draw>
+   <field name="b20" w="4in" h="0.8in"><ui><barcode type="upcEadd5"/></ui><font typeface="Arial" size="8pt"/><value><text>1234567+12345</text></value></field>
+   <draw name="gap20" w="7.5in" h="12pt"/></subform>
+<subform name="row21" layout="tb" w="7.5in"><draw name="label21" w="7.5in" h="14pt"><font typeface="Arial" size="9pt"/><value><text>22. upcean2: 12</text></value></draw>
+   <field name="b21" w="4in" h="0.8in"><ui><barcode type="upcean2"/></ui><font typeface="Arial" size="8pt"/><value><text>12</text></value></field>
+   <draw name="gap21" w="7.5in" h="12pt"/></subform>
+<subform name="row22" layout="tb" w="7.5in"><draw name="label22" w="7.5in" h="14pt"><font typeface="Arial" size="9pt"/><value><text>23. upcean5: 54321</text></value></draw>
+   <field name="b22" w="4in" h="0.8in"><ui><barcode type="upcean5"/></ui><font typeface="Arial" size="8pt"/><value><text>54321</text></value></field>
+   <draw name="gap22" w="7.5in" h="12pt"/></subform></subform></subform></template>
+endstream
+endobj
+9 0 obj
+<<  /Length 92 >>
+stream
+<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/"><xfa:data/></xfa:datasets>
+endstream
+endobj
+10 0 obj
+<<  /Length 11 >>
+stream
+</xdp:xdp>
+
+endstream
+endobj
+xref
+0 11
+0000000000 65535 f 
+0000000019 00000 n 
+0000000274 00000 n 
+0000000331 00000 n 
+0000000000 65535 f 
+0000000000 65535 f 
+0000000402 00000 n 
+0000000538 00000 n 
+0000000918 00000 n 
+0000010760 00000 n 
+0000010903 00000 n 
+trailer
+<< /Size 11 /Root 1 0 R >>
+startxref
+10966
+%%EOF
