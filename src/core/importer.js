@@ -29,6 +29,10 @@ const INHERITED = ['Resources', 'MediaBox', 'CropBox', 'Rotate'];
 
 /**
  * @param {import('./parser.js').PdfDocument} doc
+ * @param {{ log?: object, fonts?: object|null, rewrite?: ((num: number, bytes: Uint8Array) => Uint8Array|null)|null }} [opts]
+ *   rewrite: called with each stream copied whose filters were all undone
+ *   (decoded bytes, by source object number); what it returns is written
+ *   in their place
  * @returns {Promise<ImportedDoc>}
  *
  * @typedef {{ objects: { local: number, body?: string, head?: string, bytes?: Uint8Array }[],
@@ -38,9 +42,9 @@ const INHERITED = ['Resources', 'MediaBox', 'CropBox', 'Rotate'];
  *             resources: { other: string, font: string, xobject: string, extgstate: string },
  *             combs: { rect: number[], cells: number, color: number[], width: number }[] }} ImportedPage
  */
-export async function importPages(doc, { log, fonts = null } = {}) {
+export async function importPages(doc, { log, fonts = null, rewrite = null } = {}) {
   const ctx = { doc, map: new Map(), objects: [], next: 1, pending: [], forms: new Set(),
-    oc: await printVisibility(doc).catch(() => null), contentRes: new Map(), log, filtered: 0, fonts };
+    oc: await printVisibility(doc).catch(() => null), contentRes: new Map(), log, filtered: 0, fonts, rewrite };
   const catalog = await doc.catalog();
   const cat = valueOf(catalog);
   const pageDicts = [];
@@ -228,6 +232,9 @@ async function drain(ctx) {
         const cut = await withoutHiddenContent(ctx, num, dict, bytes, filters, plain);
         if (cut) { bytes = cut; ctx.filtered++; }
       }
+      // a caller's change to a content stream it could decode (print.js
+      // recolours them)
+      if (ctx.rewrite && plain) bytes = ctx.rewrite(num, bytes) ?? bytes;
       if (obj.decodedFilters) bytes = await deflate(bytes);
       let head = '<<';
       for (const [k, v] of Object.entries(dict)) head += ` /${pdfName(k)} ${await serialize(ctx, v)}`;

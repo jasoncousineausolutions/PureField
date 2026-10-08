@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Purefield print optimizer</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 20px; max-width: 1200px; margin: 0 auto; background: #fff; color: #222; }
+    h1 { font-size: 1.3em; }
+    #drop { border: 2px dashed #999; padding: 40px; text-align: center; margin-bottom: 16px;
+            color: #666; cursor: pointer; border-radius: 6px; }
+    #drop.over { border-color: #2a6; color: #2a6; }
+    label { margin-right: 16px; }
+    #output { white-space: pre-wrap; font-family: monospace; font-size: 0.85em; margin: 12px 0; }
+    .err { color: #b00; }
+    .views { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .views h2 { font-size: 0.95em; margin: 0 0 4px; }
+    iframe { width: 100%; height: 75vh; border: 1px solid #ccc; }
+    @media (max-width: 700px) { .views { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+
+<h1>Print optimizer: dark pages to black on white</h1>
+<p>Drop a PDF with dark backgrounds and light text. Backgrounds become white, text becomes black, colours become greys, and pictures stay as they are. Nothing leaves your browser.</p>
+
+<div id="drop">Drop a PDF here, or click to choose</div>
+<input type="file" id="fileInput" accept=".pdf" style="display:none">
+<label>Dark panels print as
+  <select id="panels">
+    <option value="0.92" selected>a light grey tint</option>
+    <option value="1">white</option>
+  </select>
+</label>
+
+<div id="output"></div>
+<div class="views" hidden id="views">
+  <div><h2>Original</h2><iframe id="before"></iframe></div>
+  <div><h2>For print</h2><iframe id="after"></iframe></div>
+</div>
+
+<script type="module">
+  import { optimizeForPrint } from '../src/index.js';
+
+  const out = document.getElementById('output');
+  const drop = document.getElementById('drop');
+  const input = document.getElementById('fileInput');
+  const panels = document.getElementById('panels');
+  let current = null;
+
+  async function run(file) {
+    current = file;
+    out.textContent = `${file.name} (${file.size} bytes)…\n`;
+    try {
+      const bytes = await file.arrayBuffer();
+      const t0 = performance.now();
+      const { pdf, pageCount, inverted, recolored } = await optimizeForPrint(bytes.slice(0), { panels: Number(panels.value) });
+      out.textContent += `Done in ${(performance.now() - t0).toFixed(0)} ms: ${pageCount} page(s), `
+        + `${inverted} dark background(s) or panel(s) lightened, ${recolored} element(s) printed in grey.\n`;
+      document.getElementById('before').src = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+      const url = URL.createObjectURL(new Blob([pdf], { type: 'application/pdf' }));
+      document.getElementById('after').src = url;
+      document.getElementById('views').hidden = false;
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = file.name.replace(/\.pdf$/i, '') + '-print.pdf';
+      a.textContent = `Download ${a.download}`;
+      out.appendChild(a);
+    } catch (err) {
+      const span = document.createElement('span');
+      span.className = 'err';
+      span.textContent = `Error: ${err.message}`;
+      out.appendChild(span);
+      console.error(err);
+    }
+  }
+
+  drop.addEventListener('click', () => input.click());
+  input.addEventListener('change', () => input.files[0] && run(input.files[0]));
+  panels.addEventListener('change', () => current && run(current));
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault();
+    drop.classList.remove('over');
+    if (e.dataTransfer.files[0]) run(e.dataTransfer.files[0]);
+  });
+</script>
+
+</body>
+</html>
