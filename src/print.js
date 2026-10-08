@@ -208,10 +208,10 @@ class PageReader {
   async run(num, resources, frame, depth) {
     const obj = await this.doc.getObject(num);
     if (!obj?.streamBytes) return;
-    const filters = items(obj.dict.Filter).map(f => f?.value ?? f);
-    // a stream that cannot be rewritten (an unusual filter) is read for its
-    // extents but keeps its colours
-    const editable = filters.every(f => f === 'FlateDecode') && !obj.dict.DecodeParms;
+    // a stream whose filters were not all undone (an image filter, a
+    // predictor) is read for its extents but keeps its colours
+    const parms = items(obj.dict.DecodeParms).map(p => dictOf(p));
+    const editable = (obj.decodedFilters ?? 0) === items(obj.dict.Filter).length && !parms.some(p => Number(p?.Predictor) > 1);
     const b = obj.streamBytes;
     obj.tokens ??= tokenize(b);
     const tokens = obj.tokens;

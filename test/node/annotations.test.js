@@ -207,3 +207,19 @@ test('line endings: each shape at the end, sized from the line width', () => {
   assert.match(ops('Circle'), /^13 0 m\n13 1\.657 /);
   assert.match(ops('Slash'), /^8\.5 2\.598 m\n11\.5 -2\.598 l\nS$/);
 });
+
+test('an annotation written into /Annots itself, not referenced, is drawn too', async () => {
+  const pdf = buildPdf({
+    1: '<< /Type /Catalog /Pages 2 0 R >>',
+    2: '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    3: '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 5 0 R /Annots [<< /Type /Annot /Subtype /Square /F 4 /Rect [10 10 110 40] /C [1 0 0] >>] >>',
+    5: { dict: '<< >>', stream: '' },
+  });
+  const out = await flattenXfa(pdf, { fonts: null });
+  const doc = await parsePdf(out.pdf.buffer.slice(out.pdf.byteOffset, out.pdf.byteOffset + out.pdf.byteLength));
+  const cat = (await doc.catalog()).value.value;
+  const page = (await doc.getObject((await doc.getObject(cat.Pages.num)).value.value.Kids.value[0].num)).value.value;
+  let content = '';
+  for (const r of page.Contents.value) content += latin1((await doc.getObject(r.num)).streamBytes) + '\n';
+  assert.match(content, /1 0 0 RG/);
+});

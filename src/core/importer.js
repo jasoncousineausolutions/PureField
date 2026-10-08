@@ -12,9 +12,10 @@
  * imported objects through "\u0000R<local>\u0000" placeholders that
  * PdfWriter rewrites once it knows the final numbers.
  *
- * Streams are written decrypted. A stream whose filter chain contains
- * FlateDecode was inflated by the parser; it is deflated again so its
- * dictionary (Filter, DecodeParms, predictors) stays valid unchanged.
+ * Streams are written decrypted. The filters the parser undid (ASCII85,
+ * ASCIIHex, LZW, RunLength, Flate) are replaced by one FlateDecode; the
+ * ones it left (DCT, JPX, ...) and a predictor still in the bytes stay in
+ * /Filter and /DecodeParms.
  *
  * Optional content that does not print (optional.js) is taken out of page
  * content streams and form XObjects as they are copied.
@@ -29,9 +30,9 @@ const INHERITED = ['Resources', 'MediaBox', 'CropBox', 'Rotate'];
 /**
  * @param {import('./parser.js').PdfDocument} doc
  * @param {{ log?: object, fonts?: object|null, rewrite?: ((num: number, bytes: Uint8Array) => Uint8Array|null)|null }} [opts]
- *   rewrite: called with each stream copied whose filters are none or
- *   FlateDecode alone (decoded bytes, by source object number); what it
- *   returns is written in their place
+ *   rewrite: called with each stream copied whose filters were all undone
+ *   (decoded bytes, by source object number); what it returns is written
+ *   in their place
  * @returns {Promise<ImportedDoc>}
  *
  * @typedef {{ objects: { local: number, body?: string, head?: string, bytes?: Uint8Array }[],
@@ -223,20 +224,18 @@ async function drain(ctx) {
         dict.Subtype = { type: 'name', value: 'Form' };
       }
       const filters = filterNames(dict.Filter);
+      const plain = streamFilters(dict, obj.decodedFilters ?? 0);
       let bytes = obj.streamBytes;
       // layers are resolved here: an XObject that prints keeps no /OC
       if (ctx.oc) delete dict.OC;
       if (ctx.oc && (ctx.contentRes.has(num) || dict.Subtype?.value === 'Form')) {
-        const cut = await withoutHiddenContent(ctx, num, dict, bytes, filters);
+        const cut = await withoutHiddenContent(ctx, num, dict, bytes, filters, plain);
         if (cut) { bytes = cut; ctx.filtered++; }
       }
-      // a caller's change to a content stream (print.js recolours them)
-      if (ctx.rewrite && filters.every(f => f === 'FlateDecode') && !dict.DecodeParms) {
-        bytes = ctx.rewrite(num, bytes) ?? bytes;
-      }
-      if (filters.includes('FlateDecode')) {
-        bytes = await deflate(bytes);
-      }
+      // a caller's change to a content stream it could decode (print.js
+      // recolours them)
+      if (ctx.rewrite && plain) bytes = ctx.rewrite(num, bytes) ?? bytes;
+      if (obj.decodedFilters) bytes = await deflate(bytes);
       let head = '<<';
       for (const [k, v] of Object.entries(dict)) head += ` /${pdfName(k)} ${await serialize(ctx, v)}`;
       head += ` /Length ${bytes.length} >>`;
@@ -329,8 +328,8 @@ function shownByFont(ctx) {
 
 // A content stream (page or form XObject) without the optional content that
 // does not print, or null when nothing changes or it cannot be read
-async function withoutHiddenContent(ctx, num, dict, bytes, filters) {
-  if (filters.some(f => f !== 'FlateDecode') || dict.DecodeParms) {
+async function withoutHiddenContent(ctx, num, dict, bytes, filters, plain) {
+  if (!plain) {
     ctx.log?.once?.('info', 'ACRO_OC_UNFILTERED', num, `content stream ${num} with filters ${filters.join(', ')} kept whole: hidden layers in it still print`);
     return null;
   }
@@ -422,6 +421,25 @@ function arrayItems(v) {
   if (Array.isArray(v)) return v;
   if (v.type === 'array') return v.value;
   return [];
+}
+
+// The parser undid the first `decoded` filters of a stream; it is written
+// deflated, so its /Filter becomes FlateDecode followed by the filters left
+// (/DecodeParms to match: a predictor still applied to the bytes stays with
+// the FlateDecode). Rewrites dict in place; returns whether the bytes are
+// fully decoded (content that can be edited).
+function streamFilters(dict, decoded) {
+  if (!decoded) return !dict.Filter;
+  const list = v => (v?.type === 'array' ? v.value : v ? [v] : []);
+  const filters = list(dict.Filter), parms = list(dict.DecodeParms);
+  const last = parms[decoded - 1];
+  const predictor = last?.type === 'dict' && Number(last.value.Predictor) > 1 ? last : null;
+  const f = [{ type: 'name', value: 'FlateDecode' }, ...filters.slice(decoded)];
+  const p = [predictor, ...filters.slice(decoded).map((_, i) => parms[decoded + i] ?? null)];
+  dict.Filter = f.length === 1 ? f[0] : { type: 'array', value: f };
+  if (p.every(x => x == null)) delete dict.DecodeParms;
+  else dict.DecodeParms = p.length === 1 ? p[0] : { type: 'array', value: p };
+  return f.length === 1 && !predictor;
 }
 
 function filterNames(f) {
