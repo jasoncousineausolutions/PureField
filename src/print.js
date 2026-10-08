@@ -20,6 +20,7 @@
  *     covering most of it makes it a frame instead), becomes paper
  *     white (a page) or a light tint (a panel, `panels`), and everything on
  *     it is inverted: white text turns black, pale accents turn mid grey;
+ *   - a fill in the same colour as what is under it stays invisible;
  *   - a pale fill covering most of the page becomes white;
  *   - a lighter box that other elements sit on prints no darker than the
  *     panel tint;
@@ -45,6 +46,7 @@ const LIGHTER = 0.25;         // how much lighter an element on a fill must be t
 const FRAME = 0.6;            // share of a dark fill a lighter fill on it covers when the dark one is only its frame
 const TEXT_CONTRAST = 0.45;   // least contrast kept for text…
 const LINE_CONTRAST = 0.3;    // …and for strokes and stencil masks
+const SAME = 0.02;            // luminances this close are one colour
 const MAX_DEPTH = 12;         // form XObjects inside form XObjects
 
 /**
@@ -575,7 +577,12 @@ function decide(list, pageArea, { panels }, plan, stats) {
         const kv = flip(k.kind === 'stroke' ? k.stroke : k.fill ?? k.stroke);
         return kv !== null && kv > v + LIGHTER;
       });
-      if (v < DARK && (share > PAGE_BACKGROUND || lighterOnTop)) {
+      // a fill in the colour of what is under it (a spacer, a mask over a
+      // stray edge) stays invisible: it takes that backdrop's new grey
+      const unseen = el.kind !== 'shading' && under !== null && underBefore !== null && b && Math.abs(el.fill - underBefore) < SAME;
+      if (unseen) {
+        el.out = under;
+      } else if (v < DARK && (share > PAGE_BACKGROUND || lighterOnTop)) {
         el.out = share > PAGE_BACKGROUND ? 1 : apart(panels, under);
         el.childInvert = !invert;
         stats.inverted++;

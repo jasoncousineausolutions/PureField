@@ -138,3 +138,12 @@ test('form XObjects are recoloured with the page they are drawn on', async () =>
   assert.equal(greyBefore(form.text, '(In form)'), 0.05);
   assert.doesNotMatch(form.text, /\brg\b/);
 });
+
+test('a fill in the colour of the background under it stays invisible', async () => {
+  const { txt } = await printed(page(
+    '0.36 0.08 0.08 rg 0 0 200 200 re f\n' +
+    '0.36 0.08 0.08 rg 20 80 160 30 re f\n' +
+    'BT /F1 12 Tf 1 1 1 rg 30 90 Td (Spaced) Tj ET\n'));
+  assert.equal(greyBefore(txt, '20 80 160 30 re'), 1);
+  assert.equal(greyBefore(txt, '(Spaced)'), 0);
+});
