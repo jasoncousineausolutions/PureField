@@ -85,6 +85,33 @@ export async function optimizeForPrint(input, options = {}) {
   return { pdf, log, pageCount: pages.length, ...stats };
 }
 
+/**
+ * How many pages of a parsed PDF have a dark background, looked at on up to
+ * `sample` pages spread through the file (inspect.js reports it, so a
+ * caller can suggest a print-friendly copy). A page is dark when the last
+ * fill or shading covering most of it (over 60%) is dark; a picture over
+ * the whole page is not counted, since pictures are left as they are.
+ * @param {import('./core/parser.js').PdfDocument} doc
+ * @returns {Promise<{ checked: number, dark: number }>}
+ */
+export async function darkPages(doc, { sample = 6 } = {}) {
+  const objects = new ObjectCache(doc);
+  const pages = await pageList(objects);
+  const picks = [...new Set(Array.from({ length: Math.min(sample, pages.length) },
+    (_, i) => Math.floor(i * pages.length / Math.min(sample, pages.length))))];
+  let checked = 0, dark = 0;
+  for (const i of picks) {
+    try {
+      const { list, area } = await readPage(objects, pages[i], new Plan(), new XfaLog());
+      checked++;
+      let top = null;
+      for (const el of list) if (BACKDROPS.has(el.kind) && el.area > PAGE_BACKGROUND * area) top = el;
+      if (top && top.kind !== 'image' && top.fill !== null && top.fill !== undefined && top.fill < DARK) dark++;
+    } catch { /* a page that cannot be read is not counted */ }
+  }
+  return { checked, dark };
+}
+
 // ---------------------------------------------------------------------------
 // Edits to the content streams: ranges taken out, greys put in, by offset in
 // the decoded stream. A stream drawn more than once (a form XObject shared
@@ -185,7 +212,7 @@ async function readPage(doc, page, plan, log) {
 
 function initialState(clip) {
   return { ctm: [1, 0, 0, 1, 0, 0], clip, fillCS: GRAY, strokeCS: GRAY, fill: 0, stroke: 0,
-    font: null, size: 0, scale: 1, rise: 0, render: 0 };
+    font: null, size: 0, scale: 1, rise: 0, render: 0, textClip: false };
 }
 
 const GRAY = { kind: 'gray', n: 1 };
@@ -222,6 +249,7 @@ class PageReader {
     // the path under construction ({ box, at }) and a pending clip carry
     // over too: a path may be painted in the next content stream
     let { path = null, clipNext = false } = frame;
+    let textClip = false; // text in this text object adds to the clip
     let tm = [1, 0, 0, 1, 0, 0], tlm = [1, 0, 0, 1, 0, 0];
     let leading = 0, charSpace = 0, wordSpace = 0;
     let operands = [];
@@ -247,7 +275,9 @@ class PageReader {
           const pbox = path?.box ?? null;
           if (kind && pbox) {
             // (line widths are left out of a stroke's extent)
-            this.add({ kind, box: intersect(pbox, gs.clip), fill: kind === 'stroke' ? null : gs.fill, stroke: kind === 'fill' ? null : gs.stroke,
+            // under a clip made of text (render modes 4-7), a fill paints
+            // glyph shapes: it is text, not a box
+            this.add({ kind: gs.textClip && kind !== 'stroke' ? 'text' : kind, box: intersect(pbox, gs.clip), fill: kind === 'stroke' ? null : gs.fill, stroke: kind === 'fill' ? null : gs.stroke,
               at: path.at });
           }
           if (clipNext && pbox) gs.clip = intersect(gs.clip, pbox) ?? [0, 0, 0, 0];
@@ -258,7 +288,8 @@ class PageReader {
           case 'Q': if (stack.length) gs = stack.pop(); break;
           case 'cm': { const n = nums(); if (n.length === 6) gs.ctm = mul(n, gs.ctm); break; }
           case 'W': case 'W*': clipNext = true; break;
-          case 'BT': tm = [1, 0, 0, 1, 0, 0]; tlm = [1, 0, 0, 1, 0, 0]; break;
+          case 'BT': tm = [1, 0, 0, 1, 0, 0]; tlm = [1, 0, 0, 1, 0, 0]; textClip = false; break;
+          case 'ET': if (textClip) gs.textClip = true; break;
           case 'Tf': {
             const name = operands.find(o => o.kind === 'name');
             gs.font = name ? text(b, name).slice(1) : null;
@@ -290,6 +321,7 @@ class PageReader {
                 width += (chars * (0.5 * gs.size + charSpace)) * gs.scale;
               } else if (o.kind === 'number' && op === 'TJ') width -= num_(o) / 1000 * gs.size * gs.scale;
             }
+            if (gs.render >= 4) textClip = true;
             if (gs.render !== 3 && gs.render !== 7) {
               const m = mul(tm, gs.ctm);
               let box = null;
@@ -316,7 +348,8 @@ class PageReader {
           case 'sh': {
             const name = operands.at(-1);
             const lum = name?.kind === 'name' ? await this.shading(await this.resource(resources, 'Shading', text(b, name).slice(1))) : null;
-            this.add({ kind: 'shading', box: gs.clip, fill: lum, cut: editable ? { num, start: opStart(t), end: t.end } : null });
+            // (a shading through a text clip paints glyphs: left as it is)
+            if (!gs.textClip) this.add({ kind: 'shading', box: gs.clip, fill: lum, cut: editable ? { num, start: opStart(t), end: t.end } : null });
             break;
           }
         }

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildPdf } from './pdfbuild.js';
 import { parsePdf } from '../../src/core/parser.js';
-import { optimizeForPrint } from '../../src/index.js';
+import { optimizeForPrint, inspectPdf } from '../../src/index.js';
 
 const bytesOf = u8 => u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
 
@@ -146,4 +146,17 @@ test('a fill in the colour of the background under it stays invisible', async ()
     'BT /F1 12 Tf 1 1 1 rg 30 90 Td (Spaced) Tj ET\n'));
   assert.equal(greyBefore(txt, '20 80 160 30 re'), 1);
   assert.equal(greyBefore(txt, '(Spaced)'), 0);
+});
+
+test('inspectPdf counts pages with a dark background', async () => {
+  const dark = await inspectPdf(page('0.1 0.1 0.12 rg 0 0 200 200 re f BT /F1 12 Tf 1 g 20 150 Td (Hi) Tj ET'));
+  assert.deepEqual(dark.dark, { checked: 1, pages: 1 });
+  const light = await inspectPdf(page('BT /F1 12 Tf 0 g 20 150 Td (Hi) Tj ET 0 g 20 20 50 50 re f'));
+  assert.deepEqual(light.dark, { checked: 1, pages: 0 });
+  // a dark page with a white sheet over most of it
+  const covered = await inspectPdf(page('0 g 0 0 200 200 re f 1 g 10 10 180 180 re f'));
+  assert.deepEqual(covered.dark, { checked: 1, pages: 0 });
+  // a dark fill seen only through the letters of a text clip
+  const clipped = await inspectPdf(page('q BT /F1 40 Tf 7 Tr 20 100 Td (Big) Tj ET 0 g 0 0 200 200 re f Q'));
+  assert.deepEqual(clipped.dark, { checked: 1, pages: 0 });
 });
