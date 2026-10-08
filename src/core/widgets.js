@@ -38,12 +38,20 @@ export async function collectWidgets(doc, pageNums) {
   const widgets = pageNums.map(() => []);
   const empty = { widgets, acroForm: null, needAppearances: false, dr: null, da: null, q: 0 };
 
-  // the page whose /Annots lists each annotation, and its place there
+  // the page whose /Annots lists each annotation, and its place there; an
+  // annotation written into the array itself (not a widget: no field can
+  // refer to it) gets a negative number of its own
   const annotPage = new Map();
+  const direct = new Map();
   for (const [i, num] of pageNums.entries()) {
     const page = dictOf(await doc.getObject(num));
     (await arr(doc, page.Annots)).forEach((a, k) => {
       if (a?.type === 'ref' && !annotPage.has(a.num)) annotPage.set(a.num, { page: i, order: k });
+      else if (a?.type === 'dict') {
+        const key = -(direct.size + 1);
+        direct.set(key, a.value);
+        annotPage.set(key, { page: i, order: k });
+      }
     });
   }
 
@@ -84,9 +92,9 @@ export async function collectWidgets(doc, pageNums) {
   // appearances alone, popups aside (Reader prints none)
   for (const [num] of annotPage) {
     if (seen.has(num)) continue;
-    const d = dictOf(await doc.getObject(num));
+    const d = direct.get(num) ?? dictOf(await doc.getObject(num));
     const subtype = d?.Subtype?.value;
-    if (!subtype || subtype === 'Popup') continue;
+    if (!subtype || subtype === 'Popup' || (num < 0 && subtype === 'Widget')) continue;
     if (subtype !== 'Widget') {
       await add(num, d, {}, '');
       const w = widgets[annotPage.get(num).page].at(-1);
