@@ -387,13 +387,14 @@ export function breakPieces(word) {
 
 /**
  * Break text into lines that fit maxWidth (spec §10): explicit newlines
- * always break; otherwise break on spaces; a token wider than the line
- * breaks between characters; no hyphenation. maxWidth of Infinity only splits
+ * always break; otherwise break on spaces; a token wider than the line is
+ * one line (it will clip), or with breakWords (field values) breaks
+ * between characters; no hyphenation. maxWidth of Infinity only splits
  * on newlines. textIndent shortens the first line.
  *
  * @returns {string[]}
  */
-export function wrapText(font, text, maxWidth, { textIndent = 0 } = {}) {
+export function wrapText(font, text, maxWidth, { textIndent = 0, breakWords = false } = {}) {
   if (text === null || text === undefined || text === '') return [];
   const lines = [];
   // indices of lines that end a paragraph (justify leaves them ragged)
@@ -420,10 +421,12 @@ export function wrapText(font, text, maxWidth, { textIndent = 0 } = {}) {
         } else {
           cur = test;
         }
-        // a word wider than a whole line breaks between characters, as
-        // Reader breaks it (IRCC IMM 5257 Schedule 1's narrow Province
-        // cell prints "Washingto" over "n")
-        if (Number.isFinite(maxWidth)) {
+        // in a multi-line field's value, a word wider than a whole line
+        // breaks between characters, as Reader breaks it (IRCC IMM 5257
+        // Schedule 1's narrow Province cell prints "Washingto" over "n");
+        // captions and draws keep the word whole (hmrc-c1800-chief's "No"
+        // caption, wider than its reserve, stays one line)
+        if (breakWords && Number.isFinite(maxWidth)) {
           for (;;) {
             const room = maxWidth - lineIndent(textIndent, lines.length === 0) + fitTolerance(font);
             if (textWidth(font, cur.trimEnd()) <= room) break;

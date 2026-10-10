@@ -1273,6 +1273,9 @@ export class Manifest {
   getProperty(name) {
     if (name === 'name') return { value: this.name };
     if (name === 'className') return { value: 'manifest' };
+    // its <ref>s as nodes, each value a SOM expression (IMM 0008's paper
+    // forms barcodes resolve each ref themselves)
+    if (name === 'nodes') return { value: new NodeList(this.refs.map(r => { const d = new DetachedNode('ref', ''); d.assign(r); return d; })) };
     return undefined;
   }
   call(name) {

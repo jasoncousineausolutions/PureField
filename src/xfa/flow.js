@@ -478,7 +478,7 @@ function sizeLeaf(n, availW, fill, ctx, forceW) {
     valH = richHeight(richLines) + uiM.top + uiM.bottom + (n.para?.spaceAbove ?? 0) + (n.para?.spaceBelow ?? 0);
   } else if (text !== null) {
     const indent = n.para?.textIndent ?? 0;
-    lines = isMultiLine(n) ? wrapText(font, text, textW - (n.para?.marginLeft ?? 0) - (n.para?.marginRight ?? 0), { textIndent: indent }) : (text === '' ? [] : [String(text).replace(/\s*\n\s*/g, ' ').replace(/\t/g, ' ')]);
+    lines = isMultiLine(n) ? wrapText(font, text, textW - (n.para?.marginLeft ?? 0) - (n.para?.marginRight ?? 0), { textIndent: indent, breakWords: n.type === 'field' }) : (text === '' ? [] : [String(text).replace(/\s*\n\s*/g, ' ').replace(/\t/g, ' ')]);
     // empty text holds one line without its gap: the font size (pdf.js
     // lineNoGap; Acrobat prints of Selbstauskunft's empty separator draws and
     // Attestation's empty minH fields)

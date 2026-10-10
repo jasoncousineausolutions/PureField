@@ -137,6 +137,20 @@ test('execValidate runs the validate scripts of a subtree', () => {
   assert.equal(find('form1.c').raw, 'true2');
 });
 
+test('a manifest lists its refs as nodes (IMM 0008 paper forms barcodes encode each ref)', () => {
+  const tpl = `<subform name="form1">
+    <field name="a"><bind match="dataRef" ref="$.A"/></field>
+    <field name="b"><bind match="dataRef" ref="$.B"/></field>
+    <variables><manifest name="bc"><ref>xfa[0].form[0].form1[0].a[0].dataNode</ref><ref>xfa[0].form[0].form1[0].b[0].dataNode</ref></manifest></variables>
+    <field name="code">${ev('prePrint', js(`var out = [];
+      for (var i = 0; i < bc.nodes.length; i++) { var n = xfa.resolveNode(bc.nodes.item(i).value); out.push(n == null ? "" : n.value); }
+      this.rawValue = out.join("|") + "|";`))}</field>
+  </subform>`;
+  const { find, stats } = run(tpl, '<form1><A>04</A><B>Sharma</B></form1>');
+  assert.equal(stats.failed, 0);
+  assert.equal(find('form1.code').raw, '04|Sharma|');
+});
+
 test("a script object named util hides Acrobat's util (IRCC forms call util.trim)", () => {
   const tpl = `<subform name="form1">
     <variables>${js('function trim(s) { return s.replace(/^\\s+|\\s+$/g, ""); }').replace('<script', '<script name="util"')}</variables>
@@ -239,13 +253,16 @@ test('parsePicture: dates, numbers and text masks back to canonical values', () 
 const faces = prepareFaces(await loadBundledFonts());
 const courier = resolveFont({ typeface: 'Courier New', size: 8 }, { ttf: faces });
 
-test('wrapping: a word wider than the line breaks between characters ("Washingto" / "n")', () => {
+test('wrapping: in a field value, a word wider than the line breaks between characters ("Washingto" / "n")', () => {
   // Courier 8pt: 4.8pt a character; 43.26pt holds 9
-  assert.deepEqual([...wrapText(courier, 'Washington', 43.26)], ['Washingto', 'n']);
-  assert.deepEqual([...wrapText(courier, 'Seattle, Washington', 43.26)], ['Seattle,', 'Washingto', 'n']);
-  assert.deepEqual([...wrapText(courier, 'abcdefghijklmnopqrstuvwxyz', 48)], ['abcdefghij', 'klmnopqrst', 'uvwxyz']);
+  const fieldWrap = (t, w) => [...wrapText(courier, t, w, { breakWords: true })];
+  assert.deepEqual(fieldWrap('Washington', 43.26), ['Washingto', 'n']);
+  assert.deepEqual(fieldWrap('Seattle, Washington', 43.26), ['Seattle,', 'Washingto', 'n']);
+  assert.deepEqual(fieldWrap('abcdefghijklmnopqrstuvwxyz', 48), ['abcdefghij', 'klmnopqrst', 'uvwxyz']);
   // no width: no breaking
-  assert.deepEqual([...wrapText(courier, 'Washington', Infinity)], ['Washington']);
+  assert.deepEqual(fieldWrap('Washington', Infinity), ['Washington']);
+  // captions and draws keep the word whole (hmrc-c1800-chief's "No")
+  assert.deepEqual([...wrapText(courier, 'Washington', 43.26)], ['Washington']);
 });
 
 test('wrapping: spaces at the end of a line never break it ("* Yes " caption)', () => {
