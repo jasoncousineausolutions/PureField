@@ -52,6 +52,8 @@ export class XfaDom {
     this.root = root;
     this.record = record;
     this.dataEl = dataEl ?? (record?.parentNode?.nodeType === 1 ? record.parentNode : null);
+    // xfa:datasets: the datasets beside xfa:data (IRCC forms' LOVFile)
+    this.datasetsEl = root.bindContext?.datasetsEl ?? (this.dataEl?.parentNode?.nodeType === 1 ? this.dataEl.parentNode : null);
     this.locales = locales;
     this.log = log;
     this.now = now ?? new Date();
@@ -230,6 +232,15 @@ export class NodeList {
     if (name === 'item') return this.item(Number(args[0]));
     if (name === 'append') { this.items.push(args[0]); return null; }
     if (name === 'namedItem') return this.items.find(n => n.name === String(args[0])) ?? null;
+    // nodes.remove(x): a data node leaves its data; a border property
+    // object leaves its owner (IRCC forms reset a field's look so)
+    if (name === 'remove') {
+      const it = args[0];
+      if (typeof it?.removeSelf !== 'function') throw new ScriptError('nodeList.remove() of this node is not supported');
+      it.removeSelf();
+      this.items = this.items.filter(x => x !== it);
+      return null;
+    }
     throw new ScriptError(`nodeList.${name}() is not supported`);
   }
   childrenByName() { return []; }
@@ -413,16 +424,42 @@ export class FormNode {
       return;
     }
     if (n.type !== 'field' && n.type !== 'exclGroup') throw new ScriptError(`Cannot assign a value to a ${n.type}`);
+    const group = this.exclGroup();
+    if (group) {
+      // a radio button: its on value selects it in its group, anything else
+      // clears the group if it was the one selected
+      const on = this.onValue();
+      const text = value === null || value === undefined ? null : toText(value);
+      if (text === on) this.dom.wrap(group).assign(on);
+      else if (group.raw === on) this.dom.wrap(group).assign(null);
+      return;
+    }
     n.raw = value === null || value === undefined ? null : toText(value);
     delete n.scriptDisplay;
     delete n.richValue;
     if (n.type === 'exclGroup') for (const c of n.children) if (c.type === 'field') c.raw = n.raw;
   }
 
+  // the exclusion group a radio button belongs to, else null
+  exclGroup() {
+    const n = this.inst;
+    if (n.type !== 'field') return null;
+    const p = this.dom.parents.get(n);
+    return p?.type === 'exclGroup' && p.name ? p : null;
+  }
+  onValue() { return this.itemPairs()[0]?.save ?? '1'; }
+
   rawValue() {
     const n = this.inst;
     if (n.type === 'draw') return n.value?.text ?? null;
-    const raw = n.raw;
+    let raw = n.raw;
+    // a radio button holds its on value when selected, else its off value
+    // (none: null), whatever the group holds (IRCC IMM 0008 tests
+    // accompanyPAIndicator.Yes.isNull)
+    if (this.exclGroup()) {
+      const on = this.onValue();
+      raw = raw === on ? on : (this.itemPairs()[1]?.save ?? null);
+    }
     if (raw === null || raw === undefined || raw === '') return null;
     const type = n.value?.valueType ?? (n.ui?.kind === 'numericEdit' ? 'decimal' : null);
     if (NUMERIC.has(type) || (n.ui?.kind === 'checkButton' && /^-?\d+$/.test(raw))) {
@@ -471,7 +508,7 @@ export class FormNode {
         const hit = this.itemPairs().find(p => p.display === String(args[0]));
         return hit ? hit.save : String(args[0]);
       }
-      case 'clearItems': n.items = []; return null;
+      case 'clearItems': n.items = []; n.itemsScripted = true; return null;
       // the member field whose on value the group holds
       case 'selectedMember': {
         if (n.type !== 'exclGroup') throw new ScriptError('selectedMember() needs an exclusion group');
@@ -482,11 +519,13 @@ export class FormNode {
       case 'setItemState': return null;
       case 'getItemState': return false;
       case 'deleteItem': {
+        n.itemsScripted = true;
         const i = Number(args[0]);
         n.items = (n.items ?? []).map(l => ({ ...l, values: l.values.filter((_, k) => k !== i) }));
         return null;
       }
       case 'setItems': {
+        n.itemsScripted = true;
         // "a,b,c" with one column (display = save) or two (display, save pairs)
         const parts = String(args[0] ?? '').split(',');
         const cols = Number(args[1] ?? 1) === 2 ? 2 : 1;
@@ -498,6 +537,7 @@ export class FormNode {
         return null;
       }
       case 'addItem': {
+        n.itemsScripted = true;
         const display = toText(args[0]);
         const save = args.length > 1 && args[1] !== undefined && args[1] !== null ? toText(args[1]) : display;
         if (!n.items?.length) n.items = [{ save: false, presence: 'visible', values: [] }];
@@ -516,9 +556,13 @@ export class FormNode {
         return null;
       }
       case 'execEvent': this.dom.fireEvent?.(n, String(args[0]), false); return null;
+      // the changes Acrobat saved against the template: none are kept here
+      // (the saved form state is applied before the scripts run)
+      case 'getDeltas': return new NodeList([]);
       case 'execInitialize': this.dom.fireEvent?.(n, 'initialize', true); return null;
       case 'execCalculate': this.dom.fireEvent?.(n, 'calculate', true); return null;
-      case 'execValidate': case 'recalculate': case 'remerge': case 'relayout':
+      case 'execValidate': this.dom.fireEvent?.(n, 'validate', true); return true;
+      case 'recalculate': case 'remerge': case 'relayout':
         return null;
       default:
         throw new ScriptError(`${n.type}.${name}() is not supported`);
@@ -598,6 +642,15 @@ class PropObject {
   scalar() { return readProp(this.owner.inst, [...this.path, 'value']) ?? null; }
   assign(v) { this.setProperty('value', v); }
 
+  // removed from its parent: a border goes (none is drawn, as with no
+  // <border>); other properties stay as they are
+  removeSelf() {
+    const n = this.owner.inst;
+    const p = this.path;
+    if (p.length === 1 && p[0] === 'border') delete n.border;
+    else if (p.length === 3 && p[0] === 'ui' && p[2] === 'border' && n.ui) { const { border, ...ui } = n.ui; n.ui = ui; }
+  }
+
   call(name, args = []) {
     switch (name) {
       case 'isPropertySpecified': return false;
@@ -607,7 +660,10 @@ class PropObject {
         return /^[A-Za-z]+$/.test(step) ? new PropObject(this.owner, [...this.path, step]) : null;
       }
       case 'resolveNodes': return new NodeList([]);
-      case 'getElement': return new PropObject(this.owner, [...this.path, String(args[0] ?? '')]);
+      case 'getElement': {
+        const i = Number(args[1] ?? 0);
+        return new PropObject(this.owner, [...this.path, String(args[0] ?? '') + (i > 0 ? `[${i}]` : '')]);
+      }
       case 'getAttribute': { const v = this.getProperty(String(args[0] ?? '')); return v && typeof v.value !== 'object' ? v.value : ''; }
       case 'setAttribute': this.setProperty(String(args[1] ?? ''), args[0]); return null;
       case 'saveXML': return '';
@@ -659,6 +715,13 @@ function readProp(n, path) {
       if (isValueText(rest)) return n.type === 'draw' ? (n.value?.text ?? '') : (n.raw ?? '');
       return undefined;
     case 'ui': {
+      if (rest[1] === 'border') {
+        const b = n.ui?.border;
+        const k = rest.slice(2).join('.');
+        if (k === 'presence') return b?.presence ?? 'visible';
+        if (k === 'fill.color.value') return (b?.fill?.color ?? [255, 255, 255]).join(',');
+        return undefined;
+      }
       // ui.textEdit.multiLine, ui.oneOfChild.open, ui.#choiceList.open
       const leaf = UI_LEAVES[rest[1]];
       if (rest.length !== 2 || !leaf) return undefined;
@@ -729,31 +792,19 @@ function writeProp(n, path, value) {
     }
     case 'border': {
       if (!n.border) return false;
-      if (key === 'presence' && PRESENCES.has(text)) { n.border = { ...n.border, presence: text }; return true; }
-      // border.edge / border.corner (the first), presence and colour
-      const part = /^(edge|corner)(?:\[(\d+)\])?\.(presence|color\.value|thickness)$/.exec(key);
-      if (part) {
-        const kind = part[1] === 'edge' ? 'edges' : 'corners';
-        const i = Number(part[2] ?? 0);
-        let patch = null;
-        if (part[3] === 'presence' && PRESENCES.has(text)) patch = { presence: text };
-        else if (part[3] === 'color.value') { const color = parseColor(text); if (color) patch = { color }; }
-        else if (part[3] === 'thickness') { const pt = toPt(text); if (Number.isFinite(pt)) patch = { thickness: pt }; }
-        if (!patch) return false;
-        n.border = patchBorder(n.border, kind, i, patch);
-        return true;
-      }
-      if (key === 'fill.presence' && PRESENCES.has(text)) {
-        n.border = { ...n.border, fill: { ...(n.border.fill ?? { pattern: 'solid', color: [255, 255, 255] }), presence: text } };
-        return true;
-      }
-      if (key === 'fill.color.value') {
-        const color = parseColor(text);
-        if (!color) return false;
-        n.border = { ...n.border, fill: { ...(n.border.fill ?? { pattern: 'solid' }), presence: 'visible', color } };
-        return true;
-      }
-      return false;
+      const b = borderWrite(n.border, key, text);
+      if (b) n.border = b;
+      return !!b;
+    }
+    // the widget's own border (ui.oneOfChild.border, ui.#choiceList.border,
+    // ui.textEdit.border): IRCC forms grey out a field they disable with its
+    // fill, and Reader prints it so
+    case 'ui': {
+      if (rest[1] !== 'border' || n.type !== 'field' || !n.ui) return false;
+      if (rest[0] !== 'oneOfChild' && rest[0].replace(/^#/, '') !== n.ui.kind) return false;
+      const b = borderWrite(n.ui.border ?? { presence: 'visible', hand: 'even', edges: [], corners: [], edgesGiven: 0, cornersGiven: 0, fill: null }, rest.slice(2).join('.'), text);
+      if (b) n.ui = { ...n.ui, border: b };
+      return !!b;
     }
     case 'margin':
       if (SIDES[rest[0]] && rest.length === 1) {
@@ -768,6 +819,41 @@ function writeProp(n, path, value) {
       return false;
   }
   return false;
+}
+
+// a border with one property changed by a script: presence, edge[i] and
+// corner[i] presence, colour and thickness, fill presence and colour; null
+// for what does not change the print
+function borderWrite(border, key, text) {
+  if (key === 'presence' && PRESENCES.has(text)) return { ...border, presence: text };
+  const part = /^(edge|corner)(?:\[(\d+)\])?\.(presence|color\.value|thickness)$/.exec(key);
+  if (part) {
+    const kind = part[1] === 'edge' ? 'edges' : 'corners';
+    const i = Number(part[2] ?? 0);
+    let patch = null;
+    if (part[3] === 'presence' && PRESENCES.has(text)) patch = { presence: text };
+    else if (part[3] === 'color.value') { const color = parseColor(text); if (color) patch = { color }; }
+    else if (part[3] === 'thickness') { const pt = toPt(text); if (Number.isFinite(pt)) patch = { thickness: pt }; }
+    if (!patch) return null;
+    // a border without edges has the one default edge, which a script
+    // reaching edge[i] makes explicit
+    if (!(border[kind] ?? []).length) {
+      const def = kind === 'edges'
+        ? { presence: 'visible', thickness: 0.5, color: [0, 0, 0], stroke: 'solid' }
+        : { presence: 'visible', thickness: 0.5, radius: 0, join: 'square', inverted: false, color: [0, 0, 0], stroke: 'solid' };
+      border = { ...border, [kind]: [def, def, def, def], [kind === 'edges' ? 'edgesGiven' : 'cornersGiven']: 1 };
+    }
+    return patchBorder(border, kind, i, patch);
+  }
+  if (key === 'fill.presence' && PRESENCES.has(text)) {
+    return { ...border, fill: { ...(border.fill ?? { pattern: 'solid', color: [255, 255, 255] }), presence: text } };
+  }
+  if (key === 'fill.color.value') {
+    const color = parseColor(text);
+    if (!color) return null;
+    return { ...border, fill: { ...(border.fill ?? { pattern: 'solid' }), presence: 'visible', color } };
+  }
+  return null;
 }
 
 function fontPatch(font, rest, value) {
@@ -965,7 +1051,8 @@ class FormRoot {
     if (name === 'createNode') return new DetachedNode(String(args[0] ?? ''), String(args[1] ?? ''));
     if (name === 'execInitialize') { this.dom.fireEvent?.(this.dom.root, 'initialize', true); return null; }
     if (name === 'execCalculate' || name === 'recalculate') { this.dom.fireEvent?.(this.dom.root, 'calculate', true); return null; }
-    if (['execValidate', 'remerge'].includes(name)) return null;
+    if (name === 'execValidate') { this.dom.fireEvent?.(this.dom.root, 'validate', true); return true; }
+    if (name === 'remerge') return null;
     throw new ScriptError(`form.${name}() is not supported`);
   }
 }
@@ -1060,6 +1147,25 @@ export class DataNode {
 
   scalar() { return this.value(); }
 
+  // loadXML(xml, ignoreRoot, overwrite): the XML's root element (or with
+  // ignoreRoot its children) appended under this group, replacing what it
+  // had with overwrite (IRCC forms load their lists into LOVFile so)
+  loadXML(xml, ignoreRoot, overwrite) {
+    if (this.node.nodeType !== 1 || typeof DOMParser === 'undefined') throw new ScriptError('loadXML() is not supported here');
+    const doc = new DOMParser().parseFromString(xml.replace(/^\s*<\?xml[^>]*\?>/, ''), 'text/xml');
+    const root = doc?.documentElement;
+    if (!root || doc.getElementsByTagName('parsererror').length) throw new ScriptError('loadXML(): not well-formed XML');
+    const owner = this.node.ownerDocument;
+    if (overwrite) while (this.node.firstChild) this.node.removeChild(this.node.firstChild);
+    const add = ignoreRoot ? Array.from(root.childNodes) : [root];
+    for (const n of add) this.node.appendChild(owner.importNode(n, true));
+  }
+
+  removeSelf() {
+    if (this.node.nodeType === 2) this.node.ownerElement?.removeAttributeNode(this.node);
+    else this.node.parentNode?.removeChild(this.node);
+  }
+
   // "xfa[0].datasets[0].data[0].form1[0].name[0]"
   somExpression() {
     const segs = [];
@@ -1084,6 +1190,7 @@ export class DataNode {
       case 'resolveNode': return this.dom.resolve(args[0], this)[0] ?? null;
       case 'resolveNodes': return new NodeList(this.dom.resolve(args[0], this));
       case 'isPropertySpecified': return false;
+      case 'loadXML': this.loadXML(toText(args[0] ?? ''), !!toNum01(args[1]), !!toNum01(args[2])); return null;
       default: throw new ScriptError(`${this.className}.${name}() is not supported`);
     }
   }
@@ -1183,6 +1290,12 @@ function dataAttributes(el) {
   return Array.from(el.attributes ?? []).filter(a => !a.namespaceURI && !/^xmlns(:|$)/.test(a.name) && !a.name.includes(':'));
 }
 
+function toNum01(v) {
+  if (typeof v === 'boolean') return v ? 1 : 0;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
 function localName(n) {
   return n.localName || String(n.nodeName).split(':').pop();
 }
@@ -1215,6 +1328,8 @@ class XfaRoot {
       case 'host': return { value: this.host };
       case 'layout': return { value: this.layout };
       case 'event': return { value: this.event };
+      // xfa.log.message(): Acrobat's log, nothing to print
+      case 'log': return { value: (this.log ??= new LogModel()) };
       case 'name': case 'className': return { value: 'xfa' };
     }
     return undefined;
@@ -1235,14 +1350,37 @@ class XfaRoot {
   }
 }
 
+class LogModel {
+  constructor() { this.className = 'logPseudoModel'; this.name = 'log'; }
+  get parent() { return null; }
+  childrenByName() { return []; }
+  getProperty(name) { return name === 'className' || name === 'name' ? { value: this[name] } : undefined; }
+  call(name) {
+    if (name === 'message' || name === 'traceEnabled' || name === 'traceActivate' || name === 'traceDeactivate' || name === 'trace' || name === 'setMode') return null;
+    throw new ScriptError(`log.${name}() is not supported`);
+  }
+}
+
 class Datasets {
   constructor(dom) { this.dom = dom; this.className = 'dataModel'; this.name = 'datasets'; }
   get parent() { return this.dom.xfa; }
-  childrenByName(name) { return name === 'data' ? [this.data()] : []; }
+  childrenByName(name) {
+    if (name === 'data') return [this.data()];
+    return this.others().filter(el => localName(el) === name).map(el => this.dom.wrap(el));
+  }
+  // the element children of xfa:datasets other than xfa:data
+  others() {
+    const out = [];
+    for (let c = this.dom.datasetsEl?.firstChild; c; c = c.nextSibling) {
+      if (c.nodeType === 1 && c !== this.dom.dataEl) out.push(c);
+    }
+    return out;
+  }
   // the data root; a form saved without data still has an (empty) one
   data() { return this.dom.dataEl ? this.dom.wrap(this.dom.dataEl) : (this.empty ??= new EmptyData()); }
   getProperty(name) {
     if (name === 'data') return { value: this.data() };
+    if (name === 'nodes') return { value: new NodeList([this.data(), ...this.others().map(el => this.dom.wrap(el))]) };
     if (name === 'name') return { value: 'datasets' };
     if (name === 'className') return { value: 'dataModel' };
     return undefined;

@@ -123,8 +123,10 @@ A bound field stores the raw value, not the display value.
 Choice lists bind the save value. Display text is not chosen here. Check marks bind the raw
 on-value. Neither is interpreted.
 
-Picture clauses, calculate, and validate do not run. A field whose only content would have come
-from a script paints its template default and logs XFA_BIND_SCRIPT_SKIPPED.
+Format pictures, calculate, and validate do not run here. Bind pictures are applied right after
+binding (format.js applyBindPictures), and choice lists with bindItems get their items from data
+here; scripts run later (script/run.js). A field whose only content would have come from a
+script paints its template default until then and logs XFA_BIND_SCRIPT_SKIPPED.
 
 What this stage emits
 

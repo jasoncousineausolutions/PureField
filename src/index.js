@@ -18,9 +18,9 @@ import { prepareFaces } from './core/faces.js';
 import { readFormFonts } from './core/formfonts.js';
 import { extractXfa } from './xfa/extractor.js';
 import { parseTemplateModel } from './xfa/model.js';
-import { bindData } from './xfa/bind.js';
+import { bindData, refreshBoundItems } from './xfa/bind.js';
 import { applyFormState } from './xfa/formstate.js';
-import { formatValues, displayValue } from './xfa/format.js';
+import { formatValues, displayValue, applyBindPictures } from './xfa/format.js';
 import { parseLocaleSet } from './xfa/picture.js';
 import { layoutForm } from './xfa/flow.js';
 import { paintPages } from './xfa/paint.js';
@@ -137,12 +137,14 @@ async function flattenOne(input, options, depth) {
   // that asks the layout (xfa.layout.page(), a ready:$layout event…) gets
   // the answers of a first layout, the form being built again with them
   const build = (streams, tpl, known, buildLog) => {
-    const { root } = bindData(tpl, streams.dataRoot, { log: buildLog });
+    const { root } = bindData(tpl, streams.dataRoot, { log: buildLog, datasets: streams.datasets?.documentElement ?? null });
+    applyBindPictures(root, { locales });
     // the saved form state is restored when the form opens; the scripts run
     // after it (prePrint scripts run at printing, long after the restore:
     // hmrc-c1800-chief shows every section it had saved hidden)
     applyFormState(root, streams.parseXml('form'), { log: buildLog });
     const run = scripts ? runScripts(root, { record: streams.dataRoot, locales, log: buildLog, now, layout: known }) : null;
+    if (run) refreshBoundItems(root);
     formatValues(root, { log: buildLog, locales });
     if (barcodes === 'reader') dropReaderBarcodes(root, buildLog);
     return { root, run, ...layoutForm(root, { log: buildLog, fonts: faces, pageValues: run?.pageValues,

@@ -11,6 +11,9 @@
  *                          initialize sets up the Styles its children use)
  *   calculate              every calculate script, in document order, twice
  *                          (so a total over later fields settles)
+ *   validate               every validate script, in document order (what
+ *                          it returns only warns; what it sets prints:
+ *                          IRCC IMM 0008 names each dependant's section so)
  *   ready ($form)          document order
  *   ready ($layout)        document order; run before layout, as if the
  *                          layout were done (layout queries throw)
@@ -55,7 +58,7 @@ export function runScripts(root, { record = null, locales = {}, log, now, layout
     inPage--;
   };
   walk(root);
-  if (!nodes.some(n => n.events?.length || n.calculate)) {
+  if (!nodes.some(n => n.events?.length || n.calculate || n.validate)) {
     Object.defineProperty(stats, 'evaluate', { value: () => { throw new ScriptError('The form has no scripts'); } });
     return stats;
   }
@@ -132,6 +135,8 @@ export function runScripts(root, { record = null, locales = {}, log, now, layout
   // by index: instances added meanwhile are visited in the same pass
   const events = (list, activity, ref) => { for (let i = 0; i < list.length; i++) fireOn(list[i], activity, ref); };
   const calculateAll = () => { for (let i = 0; i < nodes.length; i++) calculate(nodes[i]); };
+  const validate = n => { if (n.validate && !n.pageRole) fire(n, n.validate, 'validate'); };
+  const validateAll = () => { for (let i = 0; i < nodes.length; i++) validate(nodes[i]); };
 
   // execEvent / execInitialize / execCalculate from a script; nested at
   // most a few deep, so scripts that trigger each other cannot loop
@@ -142,6 +147,7 @@ export function runScripts(root, { record = null, locales = {}, log, now, layout
     try {
       const list = subtree ? nodes.filter(x => isWithin(x, n, dom)) : [n];
       if (activity === 'calculate') list.forEach(calculate);
+      else if (activity === 'validate') list.forEach(validate);
       else if (subtree && activity === 'initialize') events(list, activity);
       else events(list, activity);
     } finally {
@@ -151,6 +157,7 @@ export function runScripts(root, { record = null, locales = {}, log, now, layout
 
   events(nodes, 'initialize');
   for (let pass = 0; pass < 2; pass++) calculateAll();
+  validateAll();
   events(nodes, 'ready', '$form');
   events(nodes, 'ready', '$layout');
   events(nodes, 'docReady');

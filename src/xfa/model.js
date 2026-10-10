@@ -32,9 +32,9 @@ const CONTAINERS = new Set(['subform', 'subformSet', 'area', 'exclGroup', 'field
 // Script-bearing or interactive-only children. They are not modelled; their
 // presence is recorded where binding needs to know (calculate/initialize).
 const IGNORED = new Set([
-  'script', 'event', 'validate', 'assist', 'toolTip', 'speak', 'traversal',
+  'script', 'event', 'assist', 'toolTip', 'speak', 'traversal',
   'traverse', 'desc', 'extras', 'setProperty', 'connect', 'variables', 'proto',
-  'leader', 'trailer', 'bindItems', 'calculate',
+  'leader', 'trailer', 'calculate',
 ]);
 
 // properties an object has at most once
@@ -142,6 +142,11 @@ function parseContainer(el, ctx, parentType) {
       case 'caption':     node.caption = parseCaption(c, ctx); break;
       case 'value':       node.value = parseValue(c, ctx); break;
       case 'items':       (node.items ??= []).push(parseItems(c)); break;
+      // a choice list whose items come from data (xfa.datasets.LOVFile…[*]);
+      // bind.js builds the items from it, the first one counts
+      case 'bindItems':
+        if (attr(c, 'ref')) node.bindItems ??= { ref: attr(c, 'ref'), labelRef: attr(c, 'labelRef') ?? '$', valueRef: attr(c, 'valueRef') ?? '$' };
+        break;
       case 'format':      node.picture = pictureOf(c); break;
       case 'font':        node.font = parseFont(c, ctx); break;
       case 'para':        node.para = parsePara(c, ctx); break;
@@ -172,6 +177,14 @@ function parseContainer(el, ctx, parentType) {
         notePageRole(node, c);
         const script = parseScript(child(c, 'script'));
         if (script) node.calculate = script;
+        break;
+      }
+      // the validate script runs as Acrobat runs it on opening, after the
+      // calculations (IRCC forms set a dependant's heading in one); its
+      // result only decides a warning, so only what it does counts
+      case 'validate': {
+        const script = parseScript(child(c, 'script'));
+        if (script) node.validate = script;
         break;
       }
       case 'event': {
@@ -454,7 +467,12 @@ export function parseValue(el, ctx = { log: new XfaLog() }) {
   if (!c) return null;
   const tag = localName(c);
 
-  if (tag === 'text') return { kind: 'text', text: c.textContent };
+  if (tag === 'text') {
+    // maxChars: the most characters the field holds (Reader prints a longer
+    // value from data cut there)
+    const max = parseInt(attr(c, 'maxChars') ?? '0', 10);
+    return max > 0 ? { kind: 'text', text: c.textContent, maxChars: max } : { kind: 'text', text: c.textContent };
+  }
   if (VALUE_SCALARS.has(tag)) return { kind: 'text', text: c.textContent.trim(), valueType: tag };
 
   if (tag === 'exData') {

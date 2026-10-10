@@ -27,6 +27,7 @@ import { resolveFont, textWidth, wrapText, lineHeightOf, setEmbedResolver, natur
 import { layoutRich, richHeight, plainParas } from './rich.js';
 
 const EPS = 0.01;
+const CUT_EPS = 0.001;
 const NO_LIMITS = Object.freeze({ minW: 0, minH: 0, maxW: null, maxH: null });
 const ZERO = Object.freeze({ top: 0, right: 0, bottom: 0, left: 0 });
 const DEFAULT_PAGE = { width: 612, height: 792, contentAreas: [{ x: 18, y: 18, w: 576, h: 756 }] };
@@ -393,7 +394,10 @@ function captionOf(n) {
   const c = n.caption;
   if (!c || c.presence === 'hidden' || c.presence === 'inactive') return null;
   const text = c.value && (c.value.kind === 'text' || c.value.kind === 'rich') ? c.value.text ?? '' : '';
-  if (!text) return null;
+  // an empty caption still takes the room it reserves (IRCC IMM 5257
+  // Schedule 1's table cells keep 1.17mm on their left, so "Bengaluru
+  // Tamil Sangam" wraps in Reader)
+  if (!text) return c.reserve > 0 ? { ...c, value: { kind: 'text', text: '' } } : null;
   return c;
 }
 
@@ -1053,7 +1057,10 @@ function paginate(root, pageAreas, ctx) {
     }
     return null;
   };
-  const crosses = (leaves, cut) => leaves.some(l => l.y < cut - EPS && l.y + l.node.lh > cut + EPS);
+  // exact to a thousandth of a point, as Reader measures: a child reaching
+  // 0.001mm past the next row holds the two together (IRCC IMM 0008 q17
+  // moves to the next page whole)
+  const crosses = (leaves, cut) => leaves.some(l => l.y < cut - CUT_EPS && l.y + l.node.lh > cut + CUT_EPS);
   // the height of the first piece such a node can be cut into
   const firstBand = n => {
     const parts = cutParts(n);
