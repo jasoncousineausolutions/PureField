@@ -17,6 +17,7 @@ import { paintedHeight } from './rich.js';
 import { itemPairs } from './format.js';
 import { XfaLog } from './log.js';
 import { paintBarcode, compressPayloads } from './barcodes.js';
+import { widgetMargin } from './model.js';
 
 const K = 0.5522847498; // Bézier circle constant
 const DEFAULT_EDGE = Object.freeze({ presence: 'visible', thickness: 0.5, color: [0, 0, 0], stroke: 'solid' });
@@ -120,7 +121,7 @@ function paintField(n, box, ctx) {
   if (ctx.labels) { paintLabel(ctx, fieldLabel(n), value); return; }
   if (kind === 'checkButton') { paintCheck(n, value, ctx); return; }
   if (n.ui?.border) paintBorder(n.ui.border, value, ctx, false);
-  const textRect = inset(value, n.ui?.margin, true);
+  const textRect = inset(value, widgetMargin(n), true);
 
   if (kind === 'imageEdit') {
     const aspect = n.value?.kind === 'image' ? n.value.aspect : 'fit';
@@ -202,7 +203,7 @@ function paintFieldValue(n, box, ctx) {
   }
   if (kind === 'checkButton') { paintCheck(n, value, ctx, true); return; }
   if (kind === 'signature' || kind === 'button' || kind === 'imageEdit') return;
-  const textRect = inset(value, n.ui?.margin, true);
+  const textRect = inset(value, widgetMargin(n), true);
   if (kind === 'barcode') {
     // over the shell page, on white (a design-time placeholder stays hidden)
     if (n.raw === null || n.raw === undefined || n.raw === '') return;
@@ -334,7 +335,7 @@ function paintDraw(n, box, ctx) {
       const p = n.parts;
       if (p) {
         if (p.caption && n.caption) paintCaption(n, p, box, ctx);
-        const r = inset(offset(p.value, box), n.ui?.margin, true);
+        const r = inset(offset(p.value, box), widgetMargin(n), true);
         if (p.richLines) paintRich(ctx, p.richLines, n.para, r);
         else paintText(ctx, p.lines, n.font_, n.para, r, p.lineH);
       }
@@ -773,7 +774,7 @@ export function drawRun(ctx, font, str, x, baseline, extraRise = 0) {
     }
     return;
   }
-  drawFace(ctx, font, str, x, baseline, extraRise, runs[0].face);
+  drawFace(ctx, font, runs[0].text, x, baseline, extraRise, runs[0].face);
 }
 
 // A run in one face: an embedded one (two-byte glyph ids, a CJK font's

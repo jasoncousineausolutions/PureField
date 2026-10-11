@@ -80,7 +80,7 @@ export function prepareFaces(bytes) {
     }
     return fitFor(declared, wantBold, wantItalic, text);
   };
-  const out = { regular, bold, sans, forMyriad, forForm, formFonts: new Map(), fallback: null, cjk: new Map() };
+  const out = { regular, bold, sans, forMyriad, forForm, formFonts: new Map(), fallback: null, mono: null, cjk: new Map() };
   /**
    * Faces for writing systems the Latin faces lack, set once some text
    * needs them (index.js, scriptFaces): DejaVu Sans for Arabic, Hebrew,
@@ -91,6 +91,15 @@ export function prepareFaces(bytes) {
     out.fallback = {
       regular: face(b, 'JU_V', 'DejaVuSans', false, false, 'dejavu'),
       bold: bb ? face(bb, 'JU_VB', 'DejaVuSans-Bold', true, false, 'dejavu') : null,
+    };
+  };
+  // Liberation Mono for Courier-class text the standard Courier cannot
+  // encode (Vietnamese, accented names, text beside CJK): its glyphs at
+  // Courier's fixed advance, as Reader draws Courier New's
+  out.addMono = (b, bb) => {
+    out.mono = {
+      regular: face(b, 'JU_M', 'LiberationMono', false, false, 'liberation'),
+      bold: bb ? face(bb, 'JU_MB', 'LiberationMono-Bold', true, false, 'liberation') : null,
     };
   };
   // a CJK TrueType font to embed instead, when one is supplied

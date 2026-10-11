@@ -187,5 +187,8 @@ export function scriptsIn(text) {
     cjk: /[ᄀ-ᇿ⺀-㏿㐀-䶿一-鿿가-힯豈-﫿＀-￯]|[\uD840-\uD87E][\uDC00-\uDFFF]/.test(s),
     // Arabic, Hebrew, Armenian, Georgian: the bundled fallback face
     other: /[԰-ࣿႠ-ჿﬓ-﷿ﹰ-﻿]/.test(s),
+    // beyond Latin-1 and Latin Extended-A (and general punctuation):
+    // Courier text may need Liberation Mono
+    extended: /[^\u0000-\u017F\u2000-\u206F\u20AC\u2122]/.test(s),
   };
 }

@@ -185,6 +185,13 @@ function parseContainer(el, ctx, parentType) {
       case 'validate': {
         const script = parseScript(child(c, 'script'));
         if (script) node.validate = script;
+        // what scripts read of it: mandatory, and the messages they show
+        if (attr(c, 'nullTest')) node.nullTest = attr(c, 'nullTest');
+        const msg = child(c, 'message');
+        for (const t of msg ? elementChildren(msg) : []) {
+          const name = attr(t, 'name');
+          if (name === 'scriptTest' || name === 'formatTest' || name === 'nullTest') (node.validateMessages ??= {})[name] = t.textContent;
+        }
         break;
       }
       case 'event': {
@@ -381,7 +388,12 @@ function parseUi(el, ctx) {
   const b = child(widgetEl, 'border');
   if (b) ui.border = parseBorder(b, ctx);
   const m = child(widgetEl, 'margin');
-  if (m) ui.margin = parseMargin(m, ctx);
+  if (m) {
+    ui.margin = parseMargin(m, ctx);
+    // the insets the widget's margin leaves unset (widgetMargin)
+    const unset = ['topInset', 'rightInset', 'bottomInset', 'leftInset'].filter(a => attr(m, a) === null);
+    if (unset.length) ui.marginUnset = unset;
+  }
 
   switch (kind) {
     case 'textEdit': {
@@ -804,3 +816,29 @@ function child(el, name) {
   return null;
 }
 
+
+const SIDE_OF = { topInset: 'top', rightInset: 'right', bottomInset: 'bottom', leftInset: 'left' };
+/**
+ * A field's widget insets: its ui margin, where an inset is unset (an empty
+ * <margin/>) twice the thickness of the widget's visible border, as Reader
+ * insets the text of a widget whose border shows (IRCC IMM 5257's cells,
+ * given a 2pt red border by their validate scripts, print their text 4pt
+ * in from it and 5pt below and above it)
+ */
+export function widgetMargin(n) {
+  const ui = n.ui;
+  const m = ui?.margin;
+  if (!m) return null;
+  // a comb's cells fill the widget (Attestation's No ONSS prints its
+  // hyphen centred in its cell, as without the inset)
+  if (!ui.marginUnset || ui.comb > 0) return m;
+  const b = ui.border;
+  const edges = b && b.presence === 'visible' ? (b.edges ?? []).filter(e => e.presence === 'visible') : [];
+  const t = edges.length ? Math.max(...edges.map(e => e.thickness ?? 0)) : 0;
+  if (!(t > 0)) return m;
+  const out = { ...m };
+  // measured on Reader's prints of 2pt borders: the text 4pt in from the
+  // left edge, the box 2pt taller than the text and 4pt insets would need
+  for (const a of ui.marginUnset) out[SIDE_OF[a]] = (a === 'topInset' || a === 'bottomInset' ? 2.5 : 2) * t;
+  return out;
+}

@@ -32,12 +32,25 @@ export function formatValues(root, { log, locales = {}, locale = 'en_US' } = {})
  * see them (spec §6): "05" bound with num{99} becomes 5, as in Reader. A
  * value the picture does not accept stays as it is.
  */
-export function applyBindPictures(root, { locales = {}, locale = 'en_US' } = {}) {
+export function applyBindPictures(root, { locales = {}, locale = 'en_US', log } = {}) {
   const walk = (n, loc) => {
     const here = n.locale ?? loc;
     if (n.type === 'field' && n.bound && n.bind?.picture && typeof n.raw === 'string' && n.raw !== '' && !n.richValue) {
       const v = parsePicture(n.bind.picture, n.raw, { locale: here, locales, kind: n.ui?.kind });
       if (v !== null) n.raw = v;
+    }
+    if (n.type === 'field' && n.bound && typeof n.raw === 'string' && !n.richValue) {
+      // the value as the field's value element holds it: a text cut at its
+      // maxChars (Reader's scripts see the cut value: IMM 0008's long names
+      // pass its name check once cut before their first comma)
+      n.raw = clipToMaxChars(n.raw, n.value?.maxChars);
+      // an <integer> value that is not an integer is 0, as Reader replaces
+      // it ("Invalid value '163.5' … Default value of '0' will be used")
+      const t = n.value?.valueType;
+      if (t === 'integer' && n.raw.trim() !== '' && !/^\s*[+-]?\d+\s*$/.test(n.raw)) {
+        log?.info('XFA_VALUE_INVALID', `${n.som}: "${n.raw}" is not an integer; 0 is used, as in Reader`);
+        n.raw = '0';
+      }
     }
     for (const c of n.children ?? []) walk(c, here);
   };

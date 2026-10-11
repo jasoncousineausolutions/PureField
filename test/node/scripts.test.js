@@ -32,9 +32,12 @@ test('CJK collections and the scripts some text needs', () => {
   assert.equal(cjkOrdering('한국어'), 'Korea1');
   assert.equal(cjkOrdering('日本語のテキスト'), 'Japan1');
   assert.equal(cjkOrdering('中文'), 'GB1');
-  assert.deepEqual(scriptsIn('abc'), { cjk: false, other: false });
-  assert.deepEqual(scriptsIn('שלום'), { cjk: false, other: true });
-  assert.deepEqual(scriptsIn('中文'), { cjk: true, other: false });
+  assert.deepEqual(scriptsIn('abc'), { cjk: false, other: false, extended: false });
+  assert.deepEqual(scriptsIn('שלום'), { cjk: false, other: true, extended: true });
+  assert.deepEqual(scriptsIn('中文'), { cjk: true, other: false, extended: true });
+  // Vietnamese: beyond Latin Extended-A (Courier text needs Liberation Mono)
+  assert.deepEqual(scriptsIn('Hồ Chí Minh'), { cjk: false, other: false, extended: true });
+  assert.deepEqual(scriptsIn('Zürich, œuvre – “x”'), { cjk: false, other: false, extended: false });
 });
 
 const u16 = s => '<FEFF' + [...s].map(c => c.codePointAt(0).toString(16).padStart(4, '0')).join('') + '>';

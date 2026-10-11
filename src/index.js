@@ -138,7 +138,7 @@ async function flattenOne(input, options, depth) {
   // the answers of a first layout, the form being built again with them
   const build = (streams, tpl, known, buildLog) => {
     const { root } = bindData(tpl, streams.dataRoot, { log: buildLog, datasets: streams.datasets?.documentElement ?? null });
-    applyBindPictures(root, { locales });
+    applyBindPictures(root, { locales, log: buildLog });
     // the saved form state is restored when the form opens; the scripts run
     // after it (prePrint scripts run at printing, long after the restore:
     // hmrc-c1800-chief shows every section it had saved hidden)

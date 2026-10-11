@@ -151,6 +151,10 @@ export function embeddedFace(font, text) {
   // standard faces carry (writer.js EXTRA_GLYPHS)
   if (font.face !== 'Helvetica' && standardCovers(text)) return null;
   if (font.myriad && font.ttf.forMyriad) return font.ttf.forMyriad(font.bold, font.italic, text);
+  // Courier text the standard Courier cannot encode: Liberation Mono, at
+  // Courier's widths (IRCC tables print Vietnamese, and the digits beside
+  // CJK, in Courier New)
+  if (font.face === 'Courier' && font.ttf.mono) return (font.bold && font.ttf.mono.bold) || font.ttf.mono.regular;
   const face = (font.bold && font.ttf.bold) || font.ttf.regular;
   if (text === undefined || covers(face, text)) return face;
   // a character Liberation Sans lacks (✓, ☐, ☑): the bundled Source Sans
@@ -182,8 +186,11 @@ export function faceRuns(font, text) {
   const fb = ttf.fallback && ((font.bold && ttf.fallback.bold) || ttf.fallback.regular);
   let cjk;
   const runs = [];
-  for (const ch of text) {
-    const cp = ch.codePointAt(0);
+  for (let ch of text) {
+    let cp = ch.codePointAt(0);
+    // a script Reader has no font for prints a question mark a character
+    // (IRCC IMM 5257's Hindi "नई दिल्ली" prints "?? ??????")
+    if (readerLacks(cp)) { ch = '?'; cp = 0x3F; }
     let face;
     if (ch === ' ' && runs.length) face = runs.at(-1).face;
     else if (primary.glyphFor(cp) > 0 || ch === ' ') face = primary;
@@ -200,6 +207,8 @@ export function faceRuns(font, text) {
 }
 
 const ARABIC_SCALE = 0.85, ARABIC_SQUEEZE = 0.9;
+// the Indic scripts (Devanagari to Sinhala): Reader prints them as "?"
+export const readerLacks = cp => cp >= 0x900 && cp <= 0xDFF;
 const isArabic = cp => (cp >= 0x600 && cp <= 0x6FF) || (cp >= 0x750 && cp <= 0x77F) || (cp >= 0xFB50 && cp <= 0xFDFF) || (cp >= 0xFE70 && cp <= 0xFEFF);
 
 /** A run's width in points: its face's advances at its size */
@@ -257,7 +266,7 @@ export function textWidth(font, text) {
   }
   const ttf = runs[0].face;
   if (ttf) {
-    for (const ch of text) { w += ttf.width1000(ch.codePointAt(0)) * font.size / 1000; n++; }
+    for (const ch of runs[0].text) { w += ttf.width1000(ch.codePointAt(0)) * font.size / 1000; n++; }
   } else if (font.face === 'Times-Roman') {
     for (const ch of text) {
       const cp = ch.codePointAt(0);
@@ -382,7 +391,31 @@ export function lineIndent(textIndent, first) {
  * (a registration form)). Hyphens are not break opportunities here.
  */
 export function breakPieces(word) {
-  return word.split(/(?<=\/)(?=[^\d/])/);
+  const pieces = word.split(/(?<=\/)(?=[^\d/])/);
+  if (!/[\u2E80-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF\uFF00-\uFFEF]/.test(word)) return pieces;
+  return pieces.flatMap(cjkPieces);
+}
+
+// CJK text breaks between any two ideographs and before a run of letters
+// or digits after one, not before closing punctuation nor after opening
+// punctuation, and a run of letters or digits stays with the ideograph
+// after it (Reader prints IMM 5257's "上海市浦东新区世纪大道100号" as
+// "上海市浦东新区世纪大道" over "100号")
+const CJK_CHAR = /[\u2E80-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF\uFF00-\uFFEF]/;
+const NO_BREAK_BEFORE = /[、。，．：；？！）」』】〉》〕｝］・ー々〻ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ〜…,.:;?!)\]}%]/;
+const NO_BREAK_AFTER = /[（「『【〈《〔｛［(\[{$]/;
+function cjkPieces(word) {
+  const chars = Array.from(word);
+  const out = [];
+  let cur = '';
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i], prev = chars[i - 1];
+    const breakHere = i > 0 && CJK_CHAR.test(prev) && !NO_BREAK_BEFORE.test(ch) && !NO_BREAK_AFTER.test(prev);
+    if (breakHere && cur) { out.push(cur); cur = ''; }
+    cur += ch;
+  }
+  if (cur) out.push(cur);
+  return out;
 }
 
 /**

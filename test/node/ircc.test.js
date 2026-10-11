@@ -6,15 +6,15 @@
 import './setup.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseTemplateModel } from '../../src/xfa/model.js';
+import { parseTemplateModel, widgetMargin } from '../../src/xfa/model.js';
 import { bindData, refreshBoundItems } from '../../src/xfa/bind.js';
 import { runScripts } from '../../src/xfa/script/run.js';
 import { formatValues, applyBindPictures, clipToMaxChars } from '../../src/xfa/format.js';
 import { parsePicture } from '../../src/xfa/picture.js';
 import { layoutForm } from '../../src/xfa/flow.js';
-import { wrapText, resolveFont } from '../../src/xfa/text.js';
+import { wrapText, resolveFont, faceRuns, textWidth, breakPieces } from '../../src/xfa/text.js';
 import { XfaLog } from '../../src/xfa/log.js';
-import { loadBundledFonts } from '../../src/fonts.js';
+import { loadBundledFonts, loadBundledFont } from '../../src/fonts.js';
 import { prepareFaces } from '../../src/core/faces.js';
 
 const T = body => new DOMParser().parseFromString(
@@ -206,8 +206,9 @@ test('maxChars: a longer value from data prints cut at maxChars (IMM 5257 Schedu
   const { find } = run(tpl, `<form1><loc>${long}</loc><free>${long}</free></form1>`, '', { scripts: false });
   assert.equal(find('form1.loc').display, long.slice(0, 100));
   assert.ok(find('form1.loc').display.endsWith('It is delib'));
-  // the raw value scripts see is the whole value
-  assert.equal(find('form1.loc').raw, long);
+  // the value scripts see is cut too, as in Reader (IMM 0008's long names
+  // pass its name check: the comma after character 100 is gone)
+  assert.equal(find('form1.loc').raw, long.slice(0, 100));
   assert.equal(find('form1.free').display, long);
   assert.equal(clipToMaxChars('a😀bc', 2), 'a😀');
 });
@@ -304,4 +305,99 @@ test('a positioned subform does not break where a child reaches past the cut, by
   // flush rows: the second row continues on the next page
   const flush = layout(spacer + q('12.7mm'));
   assert.deepEqual(['a', 'bb', 'c'].map(n => items(flush, n)[0].page), [0, 0, 1]);
+});
+
+// ---- second round: Jason's Acrobat prints of the new IRCC cases ----------
+
+test('a dataRef [*] that finds no data node gives the subform its initial instances (IMM 5257 tables answered No)', () => {
+  const tpl = `<subform name="form1">
+    <subform name="T"><bind match="none"/>
+      <subform name="Row"><occur min="0" max="-1" initial="4"/><bind match="dataRef" ref="$.Info.Details.Detail[*]"/>
+        <field name="loc"><bind match="dataRef" ref="$.Location"/></field></subform></subform>
+    <subform name="U"><bind match="none"/>
+      <subform name="Row"><occur min="0" max="-1" initial="4"/><bind match="dataRef" ref="$.Other.Details.Detail[*]"/>
+        <field name="loc"><bind match="dataRef" ref="$.Location"/></field></subform></subform>
+  </subform>`;
+  const { root } = run(tpl, '<form1><Info><Details/></Info><Other><Details><Detail><Location>Goa</Location></Detail></Details></Other></form1>', '', { scripts: false });
+  const rows = name => root.children.find(c => c.name === name).children.filter(c => c.name === 'Row');
+  assert.equal(rows('T').length, 4);
+  // with data, as many as there are data nodes
+  assert.equal(rows('U').length, 1);
+  assert.equal(rows('U')[0].children[0].raw, 'Goa');
+});
+
+test('an <integer> value that is not an integer is 0, as Reader replaces it (IMM 0008 height 163.5)', () => {
+  const tpl = `<subform name="form1"><field name="h"><ui><numericEdit/></ui><value><integer/></value></field>
+    <field name="k"><ui><numericEdit/></ui><value><integer/></value></field>
+    <field name="d"><ui><numericEdit/></ui><value><decimal/></value></field></subform>`;
+  const log = new XfaLog();
+  const rec = D('<form1><h>163.5</h><k>163</k><d>163.5</d></form1>');
+  const { root } = bindData(parseTemplateModel(T(tpl), { log }), rec, { log });
+  applyBindPictures(root, { log });
+  const raw = name => root.children.find(c => c.name === name).raw;
+  assert.deepEqual([raw('h'), raw('k'), raw('d')], ['0', '163', '163.5']);
+  assert.equal(log.byCode('XFA_VALUE_INVALID').length, 1);
+});
+
+test("message boxes are logged, with the field's validate messages and mandatory", () => {
+  const tpl = `<subform name="form1">
+    <field name="UCI"><validate nullTest="error"><message><text name="scriptTest">3. UCI</text><text name="formatTest">-Personal Details-</text></message>
+      <script contentType="application/x-javascript">xfa.host.messageBox(this.formatMessage + String.fromCharCode(10) + this.validationMessage + String.fromCharCode(10) + this.mandatory); true;</script></validate></field>
+    <field name="b">${ev('initialize', js('this.mandatory = "error"; this.rawValue = this.mandatory + "," + UCI.mandatory;'))}</field>
+  </subform>`;
+  const { find, log } = run(tpl, '<form1/>');
+  assert.deepEqual(log.byCode('XFA_MESSAGE_BOX').map(e => e.message), ['-Personal Details- | 3. UCI | error']);
+  assert.equal(find('form1.b').raw, 'error,error');
+});
+
+test("a widget's unset insets are twice its visible border's thickness (Reader's red validation boxes)", () => {
+  const field = (ui, extra = '') => `<subform name="form1"><field name="f"><ui>${ui}</ui>${extra}</field></subform>`;
+  const one = tpl => parseTemplateModel(T(tpl)).root.children[0];
+  // hidden border: the margin as given
+  assert.deepEqual(widgetMargin(one(field('<textEdit><border presence="hidden"/><margin/></textEdit>'))), { top: 0, right: 0, bottom: 0, left: 0 });
+  const red = one(field('<textEdit><border><edge thickness="2pt"/></border><margin/></textEdit>'));
+  assert.deepEqual(widgetMargin(red), { top: 5, right: 4, bottom: 5, left: 4 });
+  // insets the margin gives are kept
+  assert.deepEqual(widgetMargin(one(field('<textEdit><border><edge thickness="2pt"/></border><margin leftInset="1pt"/></textEdit>'))), { top: 5, right: 4, bottom: 5, left: 1 });
+  // a comb's cells fill the widget
+  assert.deepEqual(widgetMargin(one(field('<textEdit><border><edge/></border><margin/><comb numberOfCells="4"/></textEdit>'))), { top: 0, right: 0, bottom: 0, left: 0 });
+});
+
+const monoFaces = prepareFaces(await loadBundledFonts());
+monoFaces.addMono(await loadBundledFont('LiberationMono-Regular'), await loadBundledFont('LiberationMono-Bold'));
+const mono = resolveFont({ typeface: 'Courier New', size: 8 }, { ttf: monoFaces });
+
+test('Courier text the standard Courier cannot encode is drawn with Liberation Mono at Courier widths', () => {
+  const runs = faceRuns(mono, 'Thành phố Hồ Chí Minh');
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].face.psName, 'LiberationMono');
+  assert.ok(Math.abs(textWidth(mono, 'Hồ Chí') - 6 * 4.8) < 0.01);
+  // the digits beside CJK keep Courier's width
+  const cjk = faceRuns(mono, '大道100号');
+  assert.deepEqual(cjk.map(r => [r.face.cjk ? 'cjk' : r.face.psName, r.text]), [['cjk', '大道'], ['LiberationMono', '100'], ['cjk', '号']]);
+});
+
+test('the Indic scripts print a question mark a character, as Reader prints them', () => {
+  const runs = faceRuns(mono, 'नई दिल्ली, Goa');
+  assert.equal(runs.map(r => r.text).join(''), '?? ??????, Goa');
+  assert.ok(Math.abs(textWidth(mono, 'नई') - 2 * 4.8) < 0.01);
+});
+
+test('CJK text breaks between ideographs, a run of digits staying with the ideograph after it', () => {
+  assert.deepEqual(breakPieces('上海市大道100号'), ['上', '海', '市', '大', '道', '100号']);
+  assert.deepEqual(breakPieces('東京、大阪'), ['東', '京、', '大', '阪']);
+  // Location cell of IMM 5257 Schedule 1: 109.8pt of text room
+  assert.deepEqual([...wrapText(mono, '上海市浦东新区世纪大道100号', 109.8)], ['上海市浦东新区世纪大道', '100号']);
+  assert.deepEqual(breakPieces('plain/text'), ['plain/', 'text']);
+});
+
+test('a keep-intact block taller than a content area moves past a fresh area and overflows the next (IMM 5257 with 40 travel rows)', () => {
+  const rows = Array.from({ length: 12 }, (_, i) => `<draw name="r${i}" w="200pt" h="20pt"/>`).join('');
+  const pages = layout(`<draw name="lead" w="200pt" h="60pt"/><subform name="t" layout="tb" w="200pt"><keep intact="contentArea"/>${rows}</subform><draw name="after" w="200pt" h="10pt"/>`);
+  assert.equal(items(pages, 'lead')[0].page, 0);
+  // page 1 left empty, the whole block on page 2, running past its end
+  assert.equal(pages[1].items.length, 0);
+  assert.deepEqual([items(pages, 'r0')[0].page, items(pages, 'r11')[0].page], [2, 2]);
+  assert.equal(items(pages, 'r11')[0].y, 220);
+  assert.equal(items(pages, 'after')[0].page, 3);
 });

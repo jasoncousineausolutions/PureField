@@ -60,6 +60,12 @@ export function bindData(model, record, { log, datasets = null } = {}) {
   return { root, grew: ctx.grew, log };
 }
 
+// matches that, finding no data node at all, instantiate the subform its
+// initial number of times, as when there is no data (Acrobat prints IRCC
+// IMM 5257 Schedule 1's tables, dataRef "…Detail[*]" over an empty
+// details group, with their 4 empty rows)
+const INITIAL_WHEN_NONE = new Set(['dataRef']);
+
 // A synthetic empty data node: every match against it fails closed
 const EMPTY = Object.freeze({ synthetic: true });
 
@@ -142,7 +148,7 @@ function bindSubform(proto, parentSom, dataNode, ctx, nextIndex) {
   // saved form state shows)
   let count = match === 'none'
     ? Math.max(1, min, initial)
-    : Math.max(n, min, noData ? initial : 0);
+    : Math.max(n, min, noData || (n === 0 && INITIAL_WHEN_NONE.has(match)) ? initial : 0);
   if (max !== -1) count = Math.min(count, max);
   if (count > initial && count > 1) ctx.grew = true;
 

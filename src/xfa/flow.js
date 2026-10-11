@@ -22,7 +22,7 @@
  */
 
 import { XfaLog } from './log.js';
-import { isPrintRelevant } from './model.js';
+import { isPrintRelevant, widgetMargin } from './model.js';
 import { resolveFont, textWidth, wrapText, lineHeightOf, setEmbedResolver, naturalLineHeight } from './text.js';
 import { layoutRich, richHeight, plainParas } from './rich.js';
 
@@ -413,7 +413,7 @@ function sizeLeaf(n, availW, fill, ctx, forceW) {
   const placement = cap ? (cap.placement === 'inline' ? 'left' : cap.placement) : null;
   const horizontalCap = placement === 'left' || placement === 'right';
 
-  const uiM = n.ui?.margin ?? ZERO;
+  const uiM = widgetMargin(n) ?? ZERO;
   const text = leafText(n);
   const kind = n.type === 'field' ? n.ui?.kind : null;
   const vk = n.value?.kind;
@@ -956,8 +956,19 @@ function paginate(root, pageAreas, ctx) {
       nextArea();
       emit(n, st.area.x + x, st.area.y + st.cursor);
       st.cursor += n.lh;
+    } else if (intact && n.lh > st.area.h + EPS) {
+      // keep intact and taller than a content area: Reader moves it on,
+      // finds it does not fit the fresh area either, leaves that area
+      // empty and places it whole on the next one, running past its end
+      // (IRCC IMM 5257 Schedule 1 with 40 travel rows: the table moves
+      // from page 3 past an empty page 4 to page 5, whose rows run over
+      // the footer and off the page; what follows starts page 6)
+      ctx.log.info('XFA_KEEP_OVERFLOW', `${n.som}: keep intact but taller than a content area; placed whole, overflowing`);
+      if (!st.fresh) nextArea();
+      nextArea();
+      emit(n, st.area.x + x, st.area.y + st.cursor);
+      st.cursor += n.lh;
     } else if (splittable(n)) {
-      if (intact) ctx.log.info('XFA_KEEP_BROKEN', `${n.som}: keep intact but taller than a content area; split`);
       split(n, x, tail);
     } else if (!intact && splitText(n, x, tail)) {
       // placed in two pieces, between lines
@@ -1097,7 +1108,7 @@ function paginate(root, pageAreas, ctx) {
     if (lines.length < 2 && !p.caption && !empty) return null;
     const height = list => (!list.length ? 0 : rich ? richHeight(list) : blockHeight(list.length, n.font_, p.lineH, n.para));
     const m = n.margin ?? ZERO;
-    const uiM = n.ui?.margin ?? ZERO;
+    const uiM = widgetMargin(n) ?? ZERO;
     const capH = p.value.y - m.top;
     // the box around the text: margins, caption, ui margins, para spacing
     const around = m.top + m.bottom + capH + uiM.top + uiM.bottom + (n.para?.spaceAbove ?? 0) + (n.para?.spaceBelow ?? 0);

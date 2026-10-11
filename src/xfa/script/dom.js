@@ -321,7 +321,11 @@ export class FormNode {
       case 'relevant': return { value: (n.relevant ?? []).map(r => (r.excluded ? '-' : '') + r.view).join(' ') };
       case 'locale': return { value: this.dom.localeOf(n) };
       case 'access': return { value: n.access ?? 'open' };
-      case 'mandatory': return { value: 'disabled' };
+      case 'mandatory': return { value: n.mandatory ?? (n.nullTest === 'error' || n.nullTest === 'warning' ? n.nullTest : 'disabled') };
+      // the validate messages (IRCC forms show them in their error boxes)
+      case 'validationMessage': return { value: n.validationMessage ?? n.validateMessages?.scriptTest ?? '' };
+      case 'formatMessage': return { value: n.formatMessage ?? n.validateMessages?.formatTest ?? '' };
+      case 'mandatoryMessage': return { value: n.validateMessages?.nullTest ?? '' };
       case 'x': case 'y': case 'w': case 'h':
         return { value: n[name] === null || n[name] === undefined ? '0in' : `${n[name]}pt` };
       case 'instanceManager':
@@ -380,7 +384,10 @@ export class FormNode {
       }
       // interactive-only: nothing to print
       case 'access': n.access = String(value); return true;
-      case 'mandatory': case 'validationMessage': case 'borderColor': case 'borderWidth':
+      case 'mandatory': if (['error', 'warning', 'disabled'].includes(String(value))) n.mandatory = String(value); return true;
+      case 'validationMessage': n.validationMessage = toText(value ?? ''); return true;
+      case 'formatMessage': n.formatMessage = toText(value ?? ''); return true;
+      case 'borderColor': case 'borderWidth':
       case 'toolTip': case 'speak':
         return true;
       case 'x': case 'y': case 'w': case 'h': {
@@ -1416,9 +1423,13 @@ class Host {
     return undefined;
   }
   setProperty() { return true; }
-  call(name) {
+  call(name, args = []) {
     switch (name) {
-      case 'messageBox': return 1; // no dialogs: as if OK were pressed
+      // no dialogs: as if OK were pressed; the message is logged (what
+      // Reader would have shown, for checking against its pop-ups)
+      case 'messageBox':
+        this.dom.log?.info('XFA_MESSAGE_BOX', toText(args[0] ?? '').replace(/\s*[\r\n]+\s*/g, ' | '));
+        return 1;
       case 'beep': case 'setFocus': case 'resetData': case 'openList': case 'exportData':
       case 'gotoURL': case 'print': case 'importData':
         return null;
