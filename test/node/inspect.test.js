@@ -13,7 +13,10 @@ test('inspectPdf: an XFA form, its fields, data, scripts and barcodes with how R
   assert.equal(i.xfa.fields, 23);
   assert.equal(i.acroForm, null);
   const by = Object.fromEntries(i.xfa.barcodes.map(b => [b.type, b]));
-  assert.deepEqual(by.aztec, { type: 'aztec', count: 2, reader: 'box' });
+  assert.deepEqual(by.aztec, { type: 'aztec', count: 2, paperForms: 0, reader: 'box' });
+  // no usage rights, but no paper forms barcode (calculated value) either
+  assert.equal(i.xfa.barcodeRights, false);
+  assert.equal(by.postAUSStandard.paperForms, 0);
   assert.equal(by.ean13add2.reader, 'dropped');
   assert.equal(by.postAUSStandard.reader, 'drawn');
   const po = await inspectPdf(readFileSync(new URL('../../samples/xfa/Purchase.Order.pdf', import.meta.url)));

@@ -38,7 +38,7 @@ const DEFAULT_EDGE = Object.freeze({ presence: 'visible', thickness: 0.5, color:
  *   in embedded faces, for subsetting
  * @returns {Promise<{ width, height, content, images }[]>} PdfWriter pages
  */
-export async function paintPages(pages, { log = new XfaLog(), byId = new Map(), overlay = false, shells = null, glyphUsage = new Map(), extraGlyphs = new Map(), xfaImages = new Map(), labels = null, faces = null, resolveImage = null, barcodes = 'reader' } = {}) {
+export async function paintPages(pages, { log = new XfaLog(), byId = new Map(), overlay = false, shells = null, glyphUsage = new Map(), extraGlyphs = new Map(), xfaImages = new Map(), labels = null, faces = null, resolveImage = null, barcodes = 'reader', barcodeRights = true } = {}) {
   const images = overlay ? new Map() : await loadImages(pages, log, xfaImages, resolveImage);
   const compressed = await compressPayloads(pages);
   const out = [];
@@ -47,7 +47,7 @@ export async function paintPages(pages, { log = new XfaLog(), byId = new Map(), 
     // static pages: the comb widgets of the shell page (core/importer.js)
     const shell = shells?.[pages.indexOf(page)] ?? null;
     const combs = shell?.combs ?? [];
-    const ctx = { cs, H: page.height, log, images, page, byId, overlay, combs, glyphUsage, extraGlyphs, shadings: [], compressed, barcodes,
+    const ctx = { cs, H: page.height, log, images, page, byId, overlay, combs, glyphUsage, extraGlyphs, shadings: [], compressed, barcodes, barcodeRights,
       labels: labels && { ...labels, faces }, shell, widgetsByName: shell?.widgets ? widgetIndex(shell.widgets) : null, stamps: [] };
     for (const item of page.items) {
       if (!item.paint) continue;

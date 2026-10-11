@@ -29,6 +29,7 @@ import { XfaLog } from './xfa/log.js';
 import { runScripts } from './xfa/script/run.js';
 import { flattenAcroForm, stampOp } from './acroform.js';
 import { collectWidgets } from './core/widgets.js';
+import { barcodeRights } from './core/rights.js';
 
 export { XfaLog, loadBundledFonts };
 export { inspectPdf } from './inspect.js';
@@ -184,7 +185,8 @@ async function flattenOne(input, options, depth) {
 
   const glyphUsage = new Map();
   const extraGlyphs = new Map();
-  const painted = await paintPages(pages, { log, byId, overlay: !!imported, shells: imported?.pages, glyphUsage, extraGlyphs, xfaImages: xfa.images, labels, faces, resolveImage: images, barcodes });
+  const rights = barcodes === 'reader' ? await barcodeRights(doc) : true;
+  const painted = await paintPages(pages, { log, byId, overlay: !!imported, shells: imported?.pages, glyphUsage, extraGlyphs, xfaImages: xfa.images, labels, faces, resolveImage: images, barcodes, barcodeRights: rights });
   const embeddedFonts = await buildEmbeddedFonts(glyphUsage);
   if (imported) painted.forEach((p, i) => { p.base = imported.pages[i]; });
   // widget appearances preferred over the template (paint.js stamps)
@@ -243,6 +245,8 @@ async function stampSignatures(doc, pages, painted, log) {
 
 // ViewerPreferences entries that steer printing, as catalog source: page
 // scaling, duplex, tray by page size, copies and page ranges
+export { barcodeRights };
+
 export async function printPreferences(doc) {
   const get = async v => (v?.type === 'ref' ? (await doc.getObject(v.num))?.value ?? null : v);
   const cat = (await doc.catalog())?.value?.value ?? {};

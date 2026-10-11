@@ -49,6 +49,9 @@ const READER_BOX = new Set(['aztec', 'rss14', 'rss14truncated', 'rss14stacked', 
 const READER_DROPS = new Set(['ean13add2', 'ean13add5', 'ean8add2', 'ean8add5', 'upcaadd2', 'upcaadd5', 'upceadd2', 'upceadd5']);
 const typeOf = n => String(n.ui?.barcode?.type ?? '').toLowerCase();
 
+/** A paper forms barcode: a barcode field whose value is calculated */
+export const isPaperForms = n => !!(n.proto ?? n).scripted?.calculate;
+
 /** How Reader prints a barcode type: 'box' (a grey box), 'dropped' (not at all) or 'drawn' */
 export function readerBarcode(type) {
   const t = String(type ?? '').toLowerCase();
@@ -134,9 +137,14 @@ export function paintBarcode(n, rect, ctx) {
     ctx.log.once('warn', 'XFA_BARCODE_ENCODING', b.charEncoding, `barcode charEncoding ${b.charEncoding} not supported; UTF-8 used`);
   }
   if (rect.w <= 0 || rect.h <= 0) return;
-  if (ctx.barcodes !== 'all' && READER_BOX.has(typeOf(n))) {
+  // a paper forms barcode (its value calculated, as Designer's Paper
+  // Forms Barcode object is) in a file whose usage rights lack
+  // BarcodePlaintext: Reader prints its grey placeholder
+  const noRights = ctx.barcodes !== 'all' && ctx.barcodeRights === false && isPaperForms(n);
+  if (noRights || (ctx.barcodes !== 'all' && READER_BOX.has(typeOf(n)))) {
     // Reader's placeholder: the rectangle grey, edged in black
-    ctx.log.once('info', 'XFA_BARCODE_READER', typeOf(n), `${b.type} barcode(s) printed as a grey box, as Reader prints them (barcodes: 'all' draws them)`);
+    if (noRights) ctx.log.once('info', 'XFA_BARCODE_RIGHTS', 'rights', 'paper forms barcode(s) printed as a grey box: the file has no usage rights for them, as in Reader (barcodes: \'all\' draws them)');
+    else ctx.log.once('info', 'XFA_BARCODE_READER', typeOf(n), `${b.type} barcode(s) printed as a grey box, as Reader prints them (barcodes: 'all' draws them)`);
     ctx.cs.save().fillColor(0.5, 0.5, 0.5).strokeColor(0, 0, 0).lineWidth(0.5)
       .rect(rect.x + 0.25, ctx.H - rect.y - rect.h + 0.25, rect.w - 0.5, rect.h - 0.5).fillStroke().restore();
     return;

@@ -11,6 +11,7 @@ import { parsePdf } from '../../src/core/parser.js';
 import { buildPdf } from './pdfbuild.js';
 import { barcodePayload, compressPayloads } from '../../src/xfa/barcodes.js';
 import { inflateSync } from 'node:zlib';
+import { readFileSync } from 'node:fs';
 
 const B = (attrs = {}) => ({ checksum: 'none', errorCorrectionLevel: null, dataColumnCount: null, dataRowCount: null, ...attrs });
 const enc = (type, text, attrs, env = {}) => {
@@ -551,3 +552,51 @@ test('an Australia Post field: Reader\'s fixed bar size from the top-left, the v
   assert.ok(Math.abs(tx + 8 * 8 * 0.556 / 2 - (10 + width / 2)) < 0.5);
 });
 
+
+test("PDF417: Reader's text compaction, codeword for codeword (IMM 0008's ten paper forms barcodes)", () => {
+  const { symbols } = JSON.parse(readFileSync(new URL('../fixtures/imm0008-pdf417.json', import.meta.url), 'utf8'));
+  const inv = CLUSTERS.map(t => new Map(t.map((v, i) => [v.toString(2), i])));
+  const mm = v => v * 72 / 25.4;
+  for (const want of symbols) {
+    // a 95.25mm field at 0.338mm modules: 12 columns
+    const { s } = enc('pdf417', want.text, { errorCorrectionLevel: 5 }, { box: { w: mm(95.25), h: mm(50.8) - 8 }, moduleWidth: mm(0.338) });
+    assert.equal(s.modules.length, want.rows, want.text.slice(0, 17));
+    const cw = [];
+    s.modules.forEach((m, r) => {
+      const bits = Array.from(m).join('');
+      for (let i = 0; i < want.cols; i++) cw.push(inv[r % 3].get(bits.slice(34 + 17 * i, 51 + 17 * i)));
+    });
+    assert.deepEqual(cw, want.codewords, want.text.slice(0, 17));
+  }
+  // latches only, never shifts: "0008_" is ml 0 0 0 8 pl _ al ml…
+  const t = enc('pdf417', 'AB0_1x', { errorCorrectionLevel: 0, dataColumnCount: 2 }).s;
+  const row0 = Array.from(t.modules[0]).join('');
+  const first = [0, 1].map(i => inv[0].get(row0.slice(34 + 17 * i, 51 + 17 * i)));
+  // [length, 900], then AB = 0*30+1, ml 0 = 28*30+0, pl _ = 25*30+7, al ml = 29*30+28, 1 ll = 1*30+27, x pad = 23*30+29
+  const row1 = Array.from(t.modules[1]).join('');
+  const second = [0, 1].map(i => inv[1].get(row1.slice(34 + 17 * i, 51 + 17 * i)));
+  assert.deepEqual([...first, ...second], [first[0], 900, 1, 840]);
+});
+
+test('paper forms barcodes print as a grey box when the usage rights lack BarcodePlaintext', async () => {
+  const { barcodeRights } = await import('../../src/index.js');
+  const catalog = perms => buildPdf({
+    1: `<< /Type /Catalog /Pages 2 0 R ${perms} >>`,
+    2: '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    3: '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>',
+  });
+  const ur = form => `/Perms << /UR3 << /Type /Sig /Reference [<< /TransformMethod /UR3 /TransformParams << /Type /TransformParams /Form [${form}] /V /2.2 >> >>] >> >>`;
+  assert.equal(await barcodeRights(await parsePdf(catalog(''))), false);
+  assert.equal(await barcodeRights(await parsePdf(catalog(ur('/FillIn /BarcodePlaintext')))), true);
+  assert.equal(await barcodeRights(await parsePdf(catalog(ur('/FillIn')))), false);
+  // a calculated pdf417 field without rights: Reader's grey box, logged;
+  // one with a plain value still draws its symbol (Reader's reader-tests prints)
+  const calc = field('type="pdf417" errorCorrectionLevel="5"', 'IMM0008').replace('</field>', '<calculate><script contentType="application/x-javascript">//nothing</script></calculate></field>');
+  const { pdf, log } = await flattenXfa(xfaForm(calc), { fonts: null });
+  assert.ok(log.entries.some(e => e.code === 'XFA_BARCODE_RIGHTS'));
+  assert.match(await pageContent(pdf), /0\.5 0\.5 0\.5 rg/);
+  const plain = await flattenXfa(xfaForm(field('type="pdf417" errorCorrectionLevel="5"', 'IMM0008')), { fonts: null });
+  assert.ok(!plain.log.entries.some(e => e.code === 'XFA_BARCODE_RIGHTS'));
+  const all = await flattenXfa(xfaForm(calc), { fonts: null, barcodes: 'all' });
+  assert.ok(!all.log.entries.some(e => e.code === 'XFA_BARCODE_RIGHTS'));
+});

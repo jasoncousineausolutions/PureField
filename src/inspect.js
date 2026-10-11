@@ -15,9 +15,13 @@
  *     fields,               <field> elements in the template
  *     filled,               data values the form holds
  *     scripts,              script elements (FormCalc and JavaScript)
- *     barcodes: [{ type, count, reader }]   reader: how Adobe Reader prints
- *                           the type: 'drawn', 'box' (a grey box) or
- *                           'dropped' (not at all; see xfa/barcodes.js)
+ *     barcodes: [{ type, count, paperForms, reader }]   reader: how Adobe
+ *                           Reader prints the type: 'drawn', 'box' (a grey
+ *                           box) or 'dropped' (not at all; see
+ *                           xfa/barcodes.js); paperForms: those whose value
+ *                           is calculated, which without barcodeRights print
+ *                           as a grey box
+ *     barcodeRights,        the usage rights grant paper forms barcodes
  *   },
  *   acroForm: null | {
  *     fields, filled,       its fields (widgets of one field count once),
@@ -48,6 +52,7 @@ import { predefinedCMap } from './core/cjk.js';
 import { extractXfa } from './xfa/extractor.js';
 import { scriptsIn } from './xfa/scripts.js';
 import { readerBarcode } from './xfa/barcodes.js';
+import { barcodeRights } from './core/rights.js';
 import { XfaLog } from './xfa/log.js';
 import { darkPages } from './print.js';
 
@@ -107,9 +112,15 @@ export async function inspectPdf(input, { password = '' } = {}) {
   if (template?.documentElement) {
     const els = name => [...template.getElementsByTagName('*')].filter(e => (e.localName ?? e.nodeName) === name);
     const barcodes = new Map();
+    const rights = await barcodeRights(doc);
     for (const b of els('barcode')) {
       const type = b.getAttribute('type') || '';
-      barcodes.set(type, (barcodes.get(type) ?? 0) + 1);
+      const e = barcodes.get(type) ?? { count: 0, paperForms: 0 };
+      e.count++;
+      // a paper forms barcode: its field has a calculate script
+      const f = b.parentNode?.parentNode;
+      if (f && [...f.childNodes].some(c => c.nodeType === 1 && (c.localName ?? c.nodeName) === 'calculate')) e.paperForms++;
+      barcodes.set(type, e);
     }
     const scripts = els('script').filter(s => (s.textContent ?? '').trim()).length;
     // the values the data holds: leaf elements with text
@@ -126,7 +137,12 @@ export async function inspectPdf(input, { password = '' } = {}) {
       fields: els('field').length,
       filled,
       scripts,
-      barcodes: [...barcodes].map(([type, count]) => ({ type, count, reader: readerBarcode(type) })),
+      // usage rights for paper forms barcodes (UR3 BarcodePlaintext)
+      barcodeRights: rights,
+      barcodes: [...barcodes].map(([type, { count, paperForms }]) => ({
+        type, count, paperForms,
+        reader: !rights && paperForms === count && readerBarcode(type) === 'drawn' ? 'box' : readerBarcode(type),
+      })),
     };
     texts.push(xfa.get('template') ?? '', xfa.get('datasets') ?? '');
   }
