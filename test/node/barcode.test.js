@@ -147,12 +147,12 @@ async function pageContent(pdf) {
   return content;
 }
 
-function xfaForm(fields, { scriptsAfter = '' } = {}) {
+function xfaForm(fields, { scriptsAfter = '', perms = '' } = {}) {
   const template = `<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/"><subform name="form1" layout="position">
     <pageSet><pageArea name="P1"><contentArea x="0" y="0" w="300pt" h="300pt"/><medium short="300pt" long="300pt"/></pageArea></pageSet>
     <subform name="page1" w="300pt" h="300pt">${fields}</subform>${scriptsAfter}</subform></template>`;
   return buildPdf({
-    1: '<< /Type /Catalog /Pages 2 0 R /NeedsRendering true /AcroForm << /Fields [] /XFA [(template) 6 0 R] >> >>',
+    1: `<< /Type /Catalog /Pages 2 0 R /NeedsRendering true /AcroForm << /Fields [] /XFA [(template) 6 0 R] >> ${perms} >>`,
     2: '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
     3: '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] >>',
     6: { dict: '<< >>', stream: template },
@@ -516,7 +516,7 @@ test('by default an EAN/UPC field with an add-on leaves the layout, as in Reader
     <field name="bc" w="180pt" h="40pt"><ui><barcode type="${type}"/></ui><font typeface="Helvetica" size="8pt"/><value><text>9771384524017+12</text></value></field>
     <draw name="b" w="100pt" h="20pt"><value><text>B</text></value></draw></subform>`;
   const form = type => buildPdf({
-    1: '<< /Type /Catalog /Pages 2 0 R /NeedsRendering true /AcroForm << /Fields [] /XFA [(template) 6 0 R] >> >>',
+    1: `<< /Type /Catalog /Pages 2 0 R /NeedsRendering true /AcroForm << /Fields [] /XFA [(template) 6 0 R] >> >>`,
     2: '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
     3: '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] >>',
     6: { dict: '<< >>', stream: `<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/"><subform name="form1" layout="tb">
@@ -578,7 +578,7 @@ test("PDF417: Reader's text compaction, codeword for codeword (IMM 0008's ten pa
   assert.deepEqual([...first, ...second], [first[0], 900, 1, 840]);
 });
 
-test('paper forms barcodes print as a grey box when the usage rights lack BarcodePlaintext', async () => {
+test('without usage rights for barcodes, a barcode whose value scripts set prints as a grey box', async () => {
   const { barcodeRights } = await import('../../src/index.js');
   const catalog = perms => buildPdf({
     1: `<< /Type /Catalog /Pages 2 0 R ${perms} >>`,
@@ -589,14 +589,18 @@ test('paper forms barcodes print as a grey box when the usage rights lack Barcod
   assert.equal(await barcodeRights(await parsePdf(catalog(''))), false);
   assert.equal(await barcodeRights(await parsePdf(catalog(ur('/FillIn /BarcodePlaintext')))), true);
   assert.equal(await barcodeRights(await parsePdf(catalog(ur('/FillIn')))), false);
-  // a calculated pdf417 field without rights: Reader's grey box, logged;
-  // one with a plain value still draws its symbol (Reader's reader-tests prints)
-  const calc = field('type="pdf417" errorCorrectionLevel="5"', 'IMM0008').replace('</field>', '<calculate><script contentType="application/x-javascript">//nothing</script></calculate></field>');
-  const { pdf, log } = await flattenXfa(xfaForm(calc), { fonts: null });
-  assert.ok(log.entries.some(e => e.code === 'XFA_BARCODE_RIGHTS'));
-  assert.match(await pageContent(pdf), /0\.5 0\.5 0\.5 rg/);
-  const plain = await flattenXfa(xfaForm(field('type="pdf417" errorCorrectionLevel="5"', 'IMM0008')), { fonts: null });
-  assert.ok(!plain.log.entries.some(e => e.code === 'XFA_BARCODE_RIGHTS'));
-  const all = await flattenXfa(xfaForm(calc), { fonts: null, barcodes: 'all' });
-  assert.ok(!all.log.entries.some(e => e.code === 'XFA_BARCODE_RIGHTS'));
+    // Without rights, Reader draws the value a barcode holds when the form
+  // opens (IMM 0008 saved after Validate: ten symbols) and prints a value
+  // scripts set in the session as a grey box (validated and printed at once)
+  const ev = js => `<event activity="initialize"><script contentType="application/x-javascript">${js}</script></event>`;
+  const stored = field('type="pdf417" errorCorrectionLevel="5"', 'IMM0008', ev('this.rawValue = "IMM" + "0008";'));
+  const live = field('type="pdf417" errorCorrectionLevel="5"', null, ev('this.rawValue = "IMM0008";'));
+  const grey = async (tpl, opts = {}, perms = '') => {
+    const { pdf, log } = await flattenXfa(xfaForm(tpl, { perms }), { fonts: null, ...opts });
+    return { box: /0\.5 0\.5 0\.5 rg/.test(await pageContent(pdf)), logged: log.entries.some(e => e.code === 'XFA_BARCODE_RIGHTS') };
+  };
+  assert.deepEqual(await grey(stored), { box: false, logged: false });
+  assert.deepEqual(await grey(live), { box: true, logged: true });
+  assert.deepEqual(await grey(live, {}, ur('/FillIn /BarcodePlaintext')), { box: false, logged: false });
+  assert.deepEqual(await grey(live, { barcodes: 'all' }), { box: false, logged: false });
 });

@@ -24,7 +24,7 @@ import { formatValues, displayValue, applyBindPictures } from './xfa/format.js';
 import { parseLocaleSet } from './xfa/picture.js';
 import { layoutForm } from './xfa/flow.js';
 import { paintPages } from './xfa/paint.js';
-import { dropReaderBarcodes } from './xfa/barcodes.js';
+import { dropReaderBarcodes, noteOpenBarcodes } from './xfa/barcodes.js';
 import { XfaLog } from './xfa/log.js';
 import { runScripts } from './xfa/script/run.js';
 import { flattenAcroForm, stampOp } from './acroform.js';
@@ -144,6 +144,9 @@ async function flattenOne(input, options, depth) {
     // after it (prePrint scripts run at printing, long after the restore:
     // hmrc-c1800-chief shows every section it had saved hidden)
     applyFormState(root, streams.parseXml('form'), { log: buildLog });
+    // what each barcode field holds when the form opens: without usage
+    // rights Reader draws that, and only that (barcodes.js)
+    if (barcodes === 'reader') noteOpenBarcodes(root);
     const run = scripts ? runScripts(root, { record: streams.dataRoot, locales, log: buildLog, now, layout: known }) : null;
     if (run) refreshBoundItems(root);
     formatValues(root, { log: buildLog, locales });

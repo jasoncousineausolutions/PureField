@@ -52,6 +52,29 @@ const typeOf = n => String(n.ui?.barcode?.type ?? '').toLowerCase();
 /** A paper forms barcode: a barcode field whose value is calculated */
 export const isPaperForms = n => !!(n.proto ?? n).scripted?.calculate;
 
+/**
+ * Records the value each barcode field has when the form opens, from its
+ * data and the saved form state, before any script runs (openValue)
+ */
+export function noteOpenBarcodes(root) {
+  const walk = n => {
+    if (n.type === 'field' && n.ui?.kind === 'barcode') n.openValue = n.raw ?? '';
+    for (const c of n.children ?? []) walk(c);
+  };
+  walk(root);
+}
+
+/**
+ * Without usage rights for barcodes, Reader draws a barcode field's symbol
+ * only for the value the field had when the form opened; a value scripts
+ * built or changed in the session prints as its grey box. IRCC IMM 0008
+ * without /Perms: saved after Validate (the ten values in the form state),
+ * Reader prints all ten symbols, though its prePrint script rebuilds them
+ * to the same values; validated and printed in the session, it prints ten
+ * grey boxes.
+ */
+export const needsRights = n => n.openValue !== undefined && (n.raw ?? '') !== n.openValue;
+
 /** How Reader prints a barcode type: 'box' (a grey box), 'dropped' (not at all) or 'drawn' */
 export function readerBarcode(type) {
   const t = String(type ?? '').toLowerCase();
@@ -137,13 +160,13 @@ export function paintBarcode(n, rect, ctx) {
     ctx.log.once('warn', 'XFA_BARCODE_ENCODING', b.charEncoding, `barcode charEncoding ${b.charEncoding} not supported; UTF-8 used`);
   }
   if (rect.w <= 0 || rect.h <= 0) return;
-  // a paper forms barcode (its value calculated, as Designer's Paper
-  // Forms Barcode object is) in a file whose usage rights lack
-  // BarcodePlaintext: Reader prints its grey placeholder
-  const noRights = ctx.barcodes !== 'all' && ctx.barcodeRights === false && isPaperForms(n);
+  // a value scripts set in this session (not the one stored in the file)
+  // in a file whose usage rights lack BarcodePlaintext: Reader prints its
+  // grey placeholder
+  const noRights = ctx.barcodes !== 'all' && ctx.barcodeRights === false && needsRights(n);
   if (noRights || (ctx.barcodes !== 'all' && READER_BOX.has(typeOf(n)))) {
     // Reader's placeholder: the rectangle grey, edged in black
-    if (noRights) ctx.log.once('info', 'XFA_BARCODE_RIGHTS', 'rights', 'paper forms barcode(s) printed as a grey box: the file has no usage rights for them, as in Reader (barcodes: \'all\' draws them)');
+    if (noRights) ctx.log.once('info', 'XFA_BARCODE_RIGHTS', 'rights', 'barcode(s) whose value scripts set printed as a grey box: the file has no usage rights for barcodes, so Reader draws only the values stored in it (barcodes: \'all\' draws them)');
     else ctx.log.once('info', 'XFA_BARCODE_READER', typeOf(n), `${b.type} barcode(s) printed as a grey box, as Reader prints them (barcodes: 'all' draws them)`);
     ctx.cs.save().fillColor(0.5, 0.5, 0.5).strokeColor(0, 0, 0).lineWidth(0.5)
       .rect(rect.x + 0.25, ctx.H - rect.y - rect.h + 0.25, rect.w - 0.5, rect.h - 0.5).fillStroke().restore();

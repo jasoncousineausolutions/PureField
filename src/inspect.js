@@ -19,8 +19,9 @@
  *                           Reader prints the type: 'drawn', 'box' (a grey
  *                           box) or 'dropped' (not at all; see
  *                           xfa/barcodes.js); paperForms: those whose value
- *                           is calculated, which without barcodeRights print
- *                           as a grey box
+ *                           is calculated; without barcodeRights Reader draws
+ *                           only values stored in the file, and prints one
+ *                           scripts build while printing as a grey box
  *     barcodeRights,        the usage rights grant paper forms barcodes
  *   },
  *   acroForm: null | {
@@ -141,7 +142,7 @@ export async function inspectPdf(input, { password = '' } = {}) {
       barcodeRights: rights,
       barcodes: [...barcodes].map(([type, { count, paperForms }]) => ({
         type, count, paperForms,
-        reader: !rights && paperForms === count && readerBarcode(type) === 'drawn' ? 'box' : readerBarcode(type),
+        reader: readerBarcode(type),
       })),
     };
     texts.push(xfa.get('template') ?? '', xfa.get('datasets') ?? '');
