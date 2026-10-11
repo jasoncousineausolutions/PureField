@@ -373,3 +373,162 @@ function kids(el, name) {
 function t(el) {
   return el.textContent;
 }
+
+// ---------------------------------------------------------------------------
+// Parsing: display or data text → canonical value (bind and edit pictures)
+// ---------------------------------------------------------------------------
+
+/**
+ * The canonical value a picture clause reads from text, as Reader reads a
+ * value from data through a <bind><picture> (IRCC forms bind month cells
+ * with num{99}, so "05" in the data is 5 to their scripts and prints "05"
+ * through the format picture): the first alternate that accepts the text
+ * wins. Dates become YYYY-MM-DD, times HH:MM:SS, numbers plain digits
+ * ("." decimal, no grouping, no leading zeros), text the characters the
+ * symbols take (literals dropped).
+ * @returns {string|null} null when no alternate accepts the text
+ */
+export function parsePicture(picture, text, { locale, locales = {}, kind } = {}) {
+  if (text === null || text === undefined) return null;
+  const s = String(text);
+  for (const alt of splitAlternates(String(picture).trim())) {
+    const parsed = parseAlternate(alt, kind);
+    if (!parsed) continue;
+    const loc = locales[parsed.locale ?? locale] ?? locales[locale] ?? EN_US;
+    const body = parsed.named ? namedPattern(parsed.category, parsed.named, loc) : parsed.body;
+    let r = null;
+    try {
+      if (parsed.category === 'date') r = parseDateText(body, s, loc);
+      else if (parsed.category === 'time') r = parseTimeText(body, s, loc);
+      else if (parsed.category === 'num') r = parseNumText(body, s, loc);
+      else if (parsed.category === 'text') r = parseTextText(body, s);
+      else if (parsed.category === 'null') r = s.trim() === literalText(body).trim() ? '' : null;
+    } catch (e) {
+      if (!(e instanceof Unsupported)) throw e;
+    }
+    if (r !== null) return r;
+  }
+  return null;
+}
+
+const reEscape = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const nameAlt = list => list.map(reEscape).sort((a, b) => b.length - a.length).join('|');
+
+function parseDateText(body, s, loc) {
+  const groups = [];
+  let re = '';
+  for (const tk of tokens(body, 'YMDJE')) {
+    if (tk.lit !== undefined) { re += reEscape(tk.lit); continue; }
+    const k = tk.sym + tk.n;
+    switch (k) {
+      case 'Y4': re += '(\\d{4})'; groups.push('y'); break;
+      case 'Y2': re += '(\\d{2})'; groups.push('yy'); break;
+      case 'M1': re += '(\\d{1,2})'; groups.push('m'); break;
+      case 'M2': re += '(\\d{2})'; groups.push('m'); break;
+      case 'M3': re += `(${nameAlt(loc.monthsAbbr)})`; groups.push('mAbbr'); break;
+      case 'M4': re += `(${nameAlt(loc.months)})`; groups.push('mName'); break;
+      case 'D1': re += '(\\d{1,2})'; groups.push('d'); break;
+      case 'D2': re += '(\\d{2})'; groups.push('d'); break;
+      case 'E1': re += '\\d'; break;
+      case 'E3': re += `(?:${nameAlt(loc.daysAbbr)})`; break;
+      case 'E4': re += `(?:${nameAlt(loc.days)})`; break;
+      default: throw new Unsupported(`date symbol ${tk.sym.repeat(tk.n)}`);
+    }
+  }
+  const m = new RegExp(`^${re}$`, 'i').exec(s.trim());
+  if (!m) return null;
+  let y = null, mo = null, d = null;
+  groups.forEach((g, i) => {
+    const v = m[i + 1];
+    if (g === 'y') y = +v;
+    else if (g === 'yy') y = +v < 30 ? 2000 + +v : 1900 + +v;
+    else if (g === 'm') mo = +v;
+    else if (g === 'mAbbr') mo = loc.monthsAbbr.findIndex(x => x.toLowerCase() === v.toLowerCase()) + 1;
+    else if (g === 'mName') mo = loc.months.findIndex(x => x.toLowerCase() === v.toLowerCase()) + 1;
+    else if (g === 'd') d = +v;
+  });
+  if (y === null || mo === null) return null;
+  d ??= 1;
+  if (mo < 1 || mo > 12 || d < 1 || d > new Date(Date.UTC(y, mo, 0)).getUTCDate()) return null;
+  const pad = (n, w) => String(n).padStart(w, '0');
+  return `${pad(y, 4)}-${pad(mo, 2)}-${pad(d, 2)}`;
+}
+
+function parseTimeText(body, s, loc) {
+  const groups = [];
+  let re = '';
+  for (const tk of tokens(body, 'HhMSAKkZz')) {
+    if (tk.lit !== undefined) { re += reEscape(tk.lit); continue; }
+    const k = tk.sym + tk.n;
+    if (k === 'H1' || k === 'h1') { re += '(\\d{1,2})'; groups.push(tk.sym); }
+    else if (k === 'H2' || k === 'h2') { re += '(\\d{2})'; groups.push(tk.sym); }
+    else if (k === 'M1' || k === 'S1') { re += '(\\d{1,2})'; groups.push(tk.sym); }
+    else if (k === 'M2' || k === 'S2') { re += '(\\d{2})'; groups.push(tk.sym); }
+    else if (k === 'A1') { re += `(${nameAlt(loc.meridiem)})`; groups.push('A'); }
+    else throw new Unsupported(`time symbol ${tk.sym.repeat(tk.n)}`);
+  }
+  const m = new RegExp(`^${re}$`, 'i').exec(s.trim());
+  if (!m) return null;
+  let h = 0, mi = 0, sec = 0, pm = null;
+  groups.forEach((g, i) => {
+    const v = m[i + 1];
+    if (g === 'H' || g === 'h') h = +v;
+    else if (g === 'M') mi = +v;
+    else if (g === 'S') sec = +v;
+    else if (g === 'A') pm = v.toLowerCase() === String(loc.meridiem[1]).toLowerCase();
+  });
+  if (pm !== null) h = (h % 12) + (pm ? 12 : 0);
+  if (h > 23 || mi > 59 || sec > 59) return null;
+  const pad = n => String(n).padStart(2, '0');
+  return `${pad(h)}:${pad(mi)}:${pad(sec)}`;
+}
+
+function parseNumText(body, s, loc) {
+  const toks = tokens(body, '9zZ.,v$%sSE');
+  if (toks.some(tk => tk.sym === 'E' || tk.sym === '%' || tk.sym === 'v')) throw new Unsupported('num symbol');
+  const isDigit = tk => tk.sym === '9' || tk.sym === 'z' || tk.sym === 'Z';
+  const dot = toks.findIndex(tk => tk.sym === '.');
+  const slots = list => list.filter(isDigit).reduce((a, tk) => a + tk.n, 0);
+  const intSlots = slots(dot === -1 ? toks : toks.slice(0, dot));
+  const fracSlots = dot === -1 ? 0 : slots(toks.slice(dot + 1));
+  let t = s.trim();
+  // literals the pattern prints, grouping, currency: not part of the number
+  for (const tk of toks) if (tk.lit !== undefined && tk.lit.trim() && !/[\d.,+-]/.test(tk.lit)) t = t.split(tk.lit).join('');
+  if (loc.currency) t = t.split(loc.currency).join('');
+  t = t.split(loc.grouping).join('').replace(/\s+/g, '');
+  const neg = t.startsWith(loc.minus) || t.startsWith('-');
+  if (neg || t.startsWith('+')) t = t.slice(1);
+  const parts = t.split(loc.decimal);
+  if (parts.length > 2) return null;
+  const [int, frac = ''] = parts;
+  if (!/^\d*$/.test(int) || !/^\d*$/.test(frac) || (int === '' && frac === '')) return null;
+  // more digits than the slots take is not this pattern (a 3-digit value
+  // does not read through num{99})
+  if (int.replace(/^0+(?=\d)/, '').length > Math.max(intSlots, 1) && int.length > intSlots) return null;
+  if (frac.length > fracSlots && dot !== -1) return null;
+  if (frac && dot === -1) return null;
+  const i = int.replace(/^0+(?=\d)/, '') || '0';
+  return `${neg ? '-' : ''}${i}${frac ? `.${frac}` : ''}`;
+}
+
+function parseTextText(body, s) {
+  const chars = [...s];
+  let i = 0;
+  let out = '';
+  for (const tk of tokens(body, 'A9XO0')) {
+    if (tk.lit !== undefined) {
+      for (const ch of tk.lit) { if (chars[i] !== ch) return null; i++; }
+      continue;
+    }
+    for (let k = 0; k < tk.n; k++) {
+      const ch = chars[i];
+      if (ch === undefined) return null;
+      const ok = tk.sym === 'X' || (tk.sym === 'A' && /\p{L}/u.test(ch)) || (tk.sym === '9' && /\d/.test(ch))
+        || ((tk.sym === 'O' || tk.sym === '0') && /[\p{L}\d]/u.test(ch));
+      if (!ok) return null;
+      out += ch;
+      i++;
+    }
+  }
+  return i === chars.length ? out : null;
+}

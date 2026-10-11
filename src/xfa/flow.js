@@ -22,11 +22,12 @@
  */
 
 import { XfaLog } from './log.js';
-import { isPrintRelevant } from './model.js';
+import { isPrintRelevant, widgetMargin } from './model.js';
 import { resolveFont, textWidth, wrapText, lineHeightOf, setEmbedResolver, naturalLineHeight } from './text.js';
 import { layoutRich, richHeight, plainParas } from './rich.js';
 
 const EPS = 0.01;
+const CUT_EPS = 0.001;
 const NO_LIMITS = Object.freeze({ minW: 0, minH: 0, maxW: null, maxH: null });
 const ZERO = Object.freeze({ top: 0, right: 0, bottom: 0, left: 0 });
 const DEFAULT_PAGE = { width: 612, height: 792, contentAreas: [{ x: 18, y: 18, w: 576, h: 756 }] };
@@ -393,7 +394,10 @@ function captionOf(n) {
   const c = n.caption;
   if (!c || c.presence === 'hidden' || c.presence === 'inactive') return null;
   const text = c.value && (c.value.kind === 'text' || c.value.kind === 'rich') ? c.value.text ?? '' : '';
-  if (!text) return null;
+  // an empty caption still takes the room it reserves (IRCC IMM 5257
+  // Schedule 1's table cells keep 1.17mm on their left, so "Bengaluru
+  // Tamil Sangam" wraps in Reader)
+  if (!text) return c.reserve > 0 ? { ...c, value: { kind: 'text', text: '' } } : null;
   return c;
 }
 
@@ -409,7 +413,7 @@ function sizeLeaf(n, availW, fill, ctx, forceW) {
   const placement = cap ? (cap.placement === 'inline' ? 'left' : cap.placement) : null;
   const horizontalCap = placement === 'left' || placement === 'right';
 
-  const uiM = n.ui?.margin ?? ZERO;
+  const uiM = widgetMargin(n) ?? ZERO;
   const text = leafText(n);
   const kind = n.type === 'field' ? n.ui?.kind : null;
   const vk = n.value?.kind;
@@ -474,7 +478,7 @@ function sizeLeaf(n, availW, fill, ctx, forceW) {
     valH = richHeight(richLines) + uiM.top + uiM.bottom + (n.para?.spaceAbove ?? 0) + (n.para?.spaceBelow ?? 0);
   } else if (text !== null) {
     const indent = n.para?.textIndent ?? 0;
-    lines = isMultiLine(n) ? wrapText(font, text, textW - (n.para?.marginLeft ?? 0) - (n.para?.marginRight ?? 0), { textIndent: indent }) : (text === '' ? [] : [String(text).replace(/\s*\n\s*/g, ' ').replace(/\t/g, ' ')]);
+    lines = isMultiLine(n) ? wrapText(font, text, textW - (n.para?.marginLeft ?? 0) - (n.para?.marginRight ?? 0), { textIndent: indent, breakWords: n.type === 'field' }) : (text === '' ? [] : [String(text).replace(/\s*\n\s*/g, ' ').replace(/\t/g, ' ')]);
     // empty text holds one line without its gap: the font size (pdf.js
     // lineNoGap; Acrobat prints of Selbstauskunft's empty separator draws and
     // Attestation's empty minH fields)
@@ -952,8 +956,19 @@ function paginate(root, pageAreas, ctx) {
       nextArea();
       emit(n, st.area.x + x, st.area.y + st.cursor);
       st.cursor += n.lh;
+    } else if (intact && n.lh > st.area.h + EPS) {
+      // keep intact and taller than a content area: Reader moves it on,
+      // finds it does not fit the fresh area either, leaves that area
+      // empty and places it whole on the next one, running past its end
+      // (IRCC IMM 5257 Schedule 1 with 40 travel rows: the table moves
+      // from page 3 past an empty page 4 to page 5, whose rows run over
+      // the footer and off the page; what follows starts page 6)
+      ctx.log.info('XFA_KEEP_OVERFLOW', `${n.som}: keep intact but taller than a content area; placed whole, overflowing`);
+      if (!st.fresh) nextArea();
+      nextArea();
+      emit(n, st.area.x + x, st.area.y + st.cursor);
+      st.cursor += n.lh;
     } else if (splittable(n)) {
-      if (intact) ctx.log.info('XFA_KEEP_BROKEN', `${n.som}: keep intact but taller than a content area; split`);
       split(n, x, tail);
     } else if (!intact && splitText(n, x, tail)) {
       // placed in two pieces, between lines
@@ -1053,7 +1068,10 @@ function paginate(root, pageAreas, ctx) {
     }
     return null;
   };
-  const crosses = (leaves, cut) => leaves.some(l => l.y < cut - EPS && l.y + l.node.lh > cut + EPS);
+  // exact to a thousandth of a point, as Reader measures: a child reaching
+  // 0.001mm past the next row holds the two together (IRCC IMM 0008 q17
+  // moves to the next page whole)
+  const crosses = (leaves, cut) => leaves.some(l => l.y < cut - CUT_EPS && l.y + l.node.lh > cut + CUT_EPS);
   // the height of the first piece such a node can be cut into
   const firstBand = n => {
     const parts = cutParts(n);
@@ -1090,7 +1108,7 @@ function paginate(root, pageAreas, ctx) {
     if (lines.length < 2 && !p.caption && !empty) return null;
     const height = list => (!list.length ? 0 : rich ? richHeight(list) : blockHeight(list.length, n.font_, p.lineH, n.para));
     const m = n.margin ?? ZERO;
-    const uiM = n.ui?.margin ?? ZERO;
+    const uiM = widgetMargin(n) ?? ZERO;
     const capH = p.value.y - m.top;
     // the box around the text: margins, caption, ui margins, para spacing
     const around = m.top + m.bottom + capH + uiM.top + uiM.bottom + (n.para?.spaceAbove ?? 0) + (n.para?.spaceBelow ?? 0);

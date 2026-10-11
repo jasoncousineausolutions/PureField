@@ -187,37 +187,59 @@ function binaryRun(b, p) {
   return i - p;
 }
 
+// Text compaction as Acrobat writes it: latches only, never the one-character
+// shifts (ps, as), each character reached by the fewest latches from the
+// submode in use (IRCC IMM 0008's paper forms barcodes: "0008_" is mixed,
+// pl, "_", al, ml, … in Reader's print, not mixed, ps, "_")
+const SUBMODES = {
+  alpha: c => c === 32 || (c >= 65 && c <= 90),
+  lower: c => c === 32 || (c >= 97 && c <= 122),
+  mixed: c => c !== 0 && MIXED.indexOf(String.fromCharCode(c)) >= 0,
+  punct: c => PUNCT.indexOf(String.fromCharCode(c)) >= 0,
+};
+// latch codewords between submodes
+const LATCHES = {
+  alpha: { lower: 27, mixed: 28 },
+  lower: { mixed: 28 },
+  mixed: { alpha: 28, lower: 27, punct: 25 },
+  punct: { alpha: 29 },
+};
+const ORDER = ['alpha', 'lower', 'mixed', 'punct'];
+function latchPath(from, c) {
+  // breadth first over the latches, submodes tried in a fixed order
+  const seen = new Map([[from, []]]);
+  const queue = [from];
+  while (queue.length) {
+    const m = queue.shift();
+    if (SUBMODES[m](c)) return { to: m, path: seen.get(m) };
+    for (const to of ORDER) {
+      const v = LATCHES[m][to];
+      if (v === undefined || seen.has(to)) continue;
+      seen.set(to, [...seen.get(m), v]);
+      queue.push(to);
+    }
+  }
+  return null;
+}
+function value(sub, c) {
+  if (sub === 'alpha') return c === 32 ? 26 : c - 65;
+  if (sub === 'lower') return c === 32 ? 26 : c - 97;
+  if (sub === 'mixed') return c === 32 ? 26 : MIXED.indexOf(String.fromCharCode(c));
+  return PUNCT.indexOf(String.fromCharCode(c));
+}
+
 function text(b, start, count, out, submode) {
   const tmp = [];
   let sub = submode;
-  const upper = c => c === 32 || (c >= 65 && c <= 90);
-  const lower = c => c === 32 || (c >= 97 && c <= 122);
-  const mixed = c => c !== 0 && MIXED.indexOf(String.fromCharCode(c)) >= 0;
-  const punct = c => PUNCT.indexOf(String.fromCharCode(c)) >= 0;
-  let i = 0;
-  while (i < count) {
+  for (let i = 0; i < count; i++) {
     const c = b[start + i];
-    if (sub === 'alpha') {
-      if (upper(c)) tmp.push(c === 32 ? 26 : c - 65);
-      else if (lower(c)) { sub = 'lower'; tmp.push(27); continue; }
-      else if (mixed(c)) { sub = 'mixed'; tmp.push(28); continue; }
-      else tmp.push(29, PUNCT.indexOf(String.fromCharCode(c)));
-    } else if (sub === 'lower') {
-      if (lower(c)) tmp.push(c === 32 ? 26 : c - 97);
-      else if (upper(c)) tmp.push(27, c - 65); // shift to alpha for one
-      else if (mixed(c)) { sub = 'mixed'; tmp.push(28); continue; }
-      else tmp.push(29, PUNCT.indexOf(String.fromCharCode(c)));
-    } else if (sub === 'mixed') {
-      if (mixed(c)) tmp.push(MIXED.indexOf(String.fromCharCode(c)));
-      else if (upper(c)) { sub = 'alpha'; tmp.push(28); continue; }
-      else if (lower(c)) { sub = 'lower'; tmp.push(27); continue; }
-      else if (start + i + 1 < start + count && punct(b[start + i + 1])) { sub = 'punct'; tmp.push(25); continue; }
-      else tmp.push(29, PUNCT.indexOf(String.fromCharCode(c)));
-    } else {
-      if (punct(c)) tmp.push(PUNCT.indexOf(String.fromCharCode(c)));
-      else { sub = 'alpha'; tmp.push(29); continue; }
+    if (!SUBMODES[sub](c)) {
+      const r = latchPath(sub, c);
+      if (!r) continue;
+      tmp.push(...r.path);
+      sub = r.to;
     }
-    i++;
+    tmp.push(value(sub, c));
   }
   for (let j = 0; j < tmp.length; j += 2) out.push(tmp[j] * 30 + (j + 1 < tmp.length ? tmp[j + 1] : 29));
   return sub;

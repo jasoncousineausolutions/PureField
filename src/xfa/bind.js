@@ -37,12 +37,16 @@ import { parseRich, richPlainText } from './rich.js';
  *   grew — some occur produced more instances than its initial count
  *          (secondary dynamic-form signal, spec §9)
  */
-export function bindData(model, record, { log } = {}) {
+export function bindData(model, record, { log, datasets = null } = {}) {
   log ??= model.log ?? new XfaLog();
+  const dataEl = record?.parentNode?.nodeType === 1 ? record.parentNode : null;
   const ctx = {
     log,
     record: record ?? null,
-    dataEl: record?.parentNode?.nodeType === 1 ? record.parentNode : null,
+    dataEl,
+    // the xfa:datasets element: bindItems lists live beside xfa:data
+    // (IRCC forms' xfa.datasets.LOVFile.LOV…)
+    datasetsEl: datasets ?? (dataEl?.parentNode?.nodeType === 1 ? dataEl.parentNode : null),
     bound: new Set(),
     grew: false,
   };
@@ -55,6 +59,12 @@ export function bindData(model, record, { log } = {}) {
   Object.defineProperty(root, 'bindContext', { value: ctx });
   return { root, grew: ctx.grew, log };
 }
+
+// matches that, finding no data node at all, instantiate the subform its
+// initial number of times, as when there is no data (Acrobat prints IRCC
+// IMM 5257 Schedule 1's tables, dataRef "…Detail[*]" over an empty
+// details group, with their 4 empty rows)
+const INITIAL_WHEN_NONE = new Set(['dataRef']);
 
 // A synthetic empty data node: every match against it fails closed
 const EMPTY = Object.freeze({ synthetic: true });
@@ -138,7 +148,7 @@ function bindSubform(proto, parentSom, dataNode, ctx, nextIndex) {
   // saved form state shows)
   let count = match === 'none'
     ? Math.max(1, min, initial)
-    : Math.max(n, min, noData ? initial : 0);
+    : Math.max(n, min, noData || (n === 0 && INITIAL_WHEN_NONE.has(match)) ? initial : 0);
   if (max !== -1) count = Math.min(count, max);
   if (count > initial && count > 1) ctx.grew = true;
 
@@ -200,6 +210,7 @@ function bindExclGroup(proto, parentSom, dataNode, ctx, index) {
 function bindField(proto, parentSom, dataNode, ctx, index) {
   const som = somOf(parentSom, proto.name, index);
   const inst = { ...proto, proto, som, index, children: [] };
+  bindItemLists(inst, dataNode, ctx);
 
   const el = matchLeaf(proto, dataNode, ctx);
   if (el) {
@@ -215,6 +226,63 @@ function bindField(proto, parentSom, dataNode, ctx, index) {
     }
   }
   return inst;
+}
+
+/**
+ * A choice list's <bindItems>: one item per data node the ref names, its
+ * display text from labelRef and its save value from valueRef, both
+ * relative to that node ("$" the node's own value, "lic" a child or an
+ * attribute named lic). They replace the template's items, as Acrobat
+ * builds them on every instance, repeated ones included. A ref that names
+ * nothing keeps the template's items.
+ */
+function bindItemLists(inst, dataNode, ctx) {
+  const bi = inst.bindItems;
+  if (!bi) return;
+  const nodes = resolveRef(bi.ref, dataNode, ctx).filter(n => n.nodeType === 1);
+  if (!nodes.length) return;
+  const display = nodes.map(n => itemValue(n, bi.labelRef));
+  const save = nodes.map(n => itemValue(n, bi.valueRef));
+  inst.items = [
+    { save: false, presence: 'visible', values: display },
+    { save: true, presence: 'hidden', values: save },
+  ];
+}
+
+/**
+ * After the scripts: the items of every choice list whose <bindItems> no
+ * script replaced are built again from the data as it now is (a form whose
+ * initialize script loads its lists into xfa.datasets, as IRCC forms'
+ * LOVUtils.initLOV does, shows them as Acrobat does)
+ */
+export function refreshBoundItems(root) {
+  const ctx = root.bindContext;
+  if (!ctx) return;
+  const walk = (n, scope) => {
+    const here = n.dataScope ?? scope;
+    if (n.type === 'field' && n.bindItems && !n.itemsScripted) bindItemLists(n, here, ctx);
+    for (const c of n.children ?? []) walk(c, here);
+  };
+  walk(root, root.dataScope ?? ctx.record ?? EMPTY);
+}
+
+function itemValue(node, ref) {
+  const r = (ref ?? '$').trim();
+  if (r === '$' || r === '') return leafValue(node) ?? '';
+  const segs = splitSom(r.replace(/^\$\./, ''));
+  let n = node;
+  for (const seg of segs) {
+    const name = seg.replace(/^[@#]/, '').replace(/\[0\]$/, '');
+    let next = null;
+    if (seg[0] !== '@' && seg[0] !== '#') {
+      for (let c = n.firstChild; c; c = c.nextSibling) if (c.nodeType === 1 && localName(c) === name) { next = c; break; }
+    }
+    // an attribute is a data value too (Acrobat loads attributes)
+    next ??= n.getAttributeNode?.(name) ?? null;
+    if (!next) return '';
+    n = next;
+  }
+  return leafValue(n) ?? '';
 }
 
 // Find (and consume) the data node for a field or exclGroup
@@ -309,6 +377,7 @@ function bindBoilerplate(proto, som, current, ctx) {
   const inst = { ...proto, proto, som, index: 0, children: [] };
   const match = proto.bind?.match;
   if (proto.type === 'field') {
+    bindItemLists(inst, current, ctx);
     const el = match === 'dataRef' || match === 'global' ? matchLeaf(proto, current, ctx) : null;
     if (el) setBoundValue(inst, el);
     else inst.raw = templateDefault(proto);
@@ -375,7 +444,13 @@ export function resolveRef(ref, current, ctx) {
   else if (segs[0] === '$record') { nodes = [ctx.record]; segs = segs.slice(1); }
   else if (segs[0] === '$data') { nodes = [ctx.dataEl]; segs = segs.slice(1); }
   else if (segs[0] === 'xfa' && segs[1] === 'datasets' && segs[2] === 'data') { nodes = [ctx.dataEl]; segs = segs.slice(3); }
-  else if (segs[0] === '!') { return []; }
+  // another dataset beside xfa:data (xfa.datasets.LOVFile, !LOVFile)
+  else if (segs[0] === 'xfa' && segs[1] === 'datasets' && segs.length > 2) { nodes = [ctx.datasetsEl]; segs = segs.slice(2); }
+  else if (segs[0][0] === '!') {
+    if (!ctx.datasetsEl) return [];
+    nodes = [ctx.datasetsEl];
+    segs = segs[0] === '!' ? segs.slice(1) : [segs[0].slice(1), ...segs.slice(1)];
+  }
   else {
     // Unqualified (a.b): SOM implicit scoping — if the first segment is not a
     // child of the current node, retry from each ancestor (as pdf.js does)

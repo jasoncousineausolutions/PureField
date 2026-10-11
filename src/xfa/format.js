@@ -12,13 +12,46 @@
  *                the nearest ancestor (picture.js); ui pictures are edit-only
  */
 
-import { formatPicture } from './picture.js';
+import { formatPicture, parsePicture } from './picture.js';
 
 export function formatValues(root, { log, locales = {}, locale = 'en_US' } = {}) {
   // locale is inherited down the tree from the nearest ancestor that sets one
   const walk = (n, loc) => {
     const here = n.locale ?? loc;
     if (n.type === 'field') n.display = displayValue(n, { log, locales, locale: here });
+    for (const c of n.children ?? []) walk(c, here);
+  };
+  const rootLocale = root.locale ?? locale;
+  walk(root, rootLocale);
+  for (const ps of root.pageSets ?? []) walkPageSet(ps, n => walk(n, rootLocale));
+  return root;
+}
+
+/**
+ * Values from data read through their <bind><picture>, before the scripts
+ * see them (spec §6): "05" bound with num{99} becomes 5, as in Reader. A
+ * value the picture does not accept stays as it is.
+ */
+export function applyBindPictures(root, { locales = {}, locale = 'en_US', log } = {}) {
+  const walk = (n, loc) => {
+    const here = n.locale ?? loc;
+    if (n.type === 'field' && n.bound && n.bind?.picture && typeof n.raw === 'string' && n.raw !== '' && !n.richValue) {
+      const v = parsePicture(n.bind.picture, n.raw, { locale: here, locales, kind: n.ui?.kind });
+      if (v !== null) n.raw = v;
+    }
+    if (n.type === 'field' && n.bound && typeof n.raw === 'string' && !n.richValue) {
+      // the value as the field's value element holds it: a text cut at its
+      // maxChars (Reader's scripts see the cut value: IMM 0008's long names
+      // pass its name check once cut before their first comma)
+      n.raw = clipToMaxChars(n.raw, n.value?.maxChars);
+      // an <integer> value that is not an integer is 0, as Reader replaces
+      // it ("Invalid value '163.5' … Default value of '0' will be used")
+      const t = n.value?.valueType;
+      if (t === 'integer' && n.raw.trim() !== '' && !/^\s*[+-]?\d+\s*$/.test(n.raw)) {
+        log?.info('XFA_VALUE_INVALID', `${n.som}: "${n.raw}" is not an integer; 0 is used, as in Reader`);
+        n.raw = '0';
+      }
+    }
     for (const c of n.children ?? []) walk(c, here);
   };
   const rootLocale = root.locale ?? locale;
@@ -48,7 +81,7 @@ export function itemPairs(n) {
  * @returns {string|null} null for widgets that show no text
  */
 export function displayValue(n, opts) {
-  const raw = n.raw;
+  let raw = n.raw;
   const kind = n.ui?.kind;
   if (kind === 'checkButton' || kind === 'imageEdit' || kind === 'passwordEdit') return null;
   if (n.scriptDisplay !== undefined) return n.scriptDisplay;
@@ -56,6 +89,7 @@ export function displayValue(n, opts) {
     const hit = itemPairs(n).find(p => p.save === raw);
     return hit ? hit.display : (raw ?? '');
   }
+  if (n.type === 'field') raw = clipToMaxChars(raw, n.value?.maxChars);
   // format/picture is the display pattern; ui/*/picture only governs editing
   // (Acrobat prints a field with just an edit picture as its raw value)
   const picture = n.picture ?? null;
@@ -66,4 +100,15 @@ export function displayValue(n, opts) {
     return raw.trim().replace(/0+$/, '').replace(/\.$/, '');
   }
   return raw ?? '';
+}
+
+/**
+ * A text field's value cut to its <text maxChars>: Reader prints only the
+ * first maxChars characters of a longer value from data (IRCC IMM 5257
+ * Schedule 1's 100-character location cells end "…It is delib")
+ */
+export function clipToMaxChars(raw, max) {
+  if (typeof raw !== 'string' || !(max > 0) || raw.length <= max) return raw;
+  const chars = Array.from(raw);
+  return chars.length <= max ? raw : chars.slice(0, max).join('');
 }

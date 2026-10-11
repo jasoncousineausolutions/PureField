@@ -11,6 +11,7 @@ import { parsePdf } from '../../src/core/parser.js';
 import { buildPdf } from './pdfbuild.js';
 import { barcodePayload, compressPayloads } from '../../src/xfa/barcodes.js';
 import { inflateSync } from 'node:zlib';
+import { readFileSync } from 'node:fs';
 
 const B = (attrs = {}) => ({ checksum: 'none', errorCorrectionLevel: null, dataColumnCount: null, dataRowCount: null, ...attrs });
 const enc = (type, text, attrs, env = {}) => {
@@ -146,12 +147,12 @@ async function pageContent(pdf) {
   return content;
 }
 
-function xfaForm(fields, { scriptsAfter = '' } = {}) {
+function xfaForm(fields, { scriptsAfter = '', perms = '' } = {}) {
   const template = `<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/"><subform name="form1" layout="position">
     <pageSet><pageArea name="P1"><contentArea x="0" y="0" w="300pt" h="300pt"/><medium short="300pt" long="300pt"/></pageArea></pageSet>
     <subform name="page1" w="300pt" h="300pt">${fields}</subform>${scriptsAfter}</subform></template>`;
   return buildPdf({
-    1: '<< /Type /Catalog /Pages 2 0 R /NeedsRendering true /AcroForm << /Fields [] /XFA [(template) 6 0 R] >> >>',
+    1: `<< /Type /Catalog /Pages 2 0 R /NeedsRendering true /AcroForm << /Fields [] /XFA [(template) 6 0 R] >> ${perms} >>`,
     2: '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
     3: '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] >>',
     6: { dict: '<< >>', stream: template },
@@ -515,7 +516,7 @@ test('by default an EAN/UPC field with an add-on leaves the layout, as in Reader
     <field name="bc" w="180pt" h="40pt"><ui><barcode type="${type}"/></ui><font typeface="Helvetica" size="8pt"/><value><text>9771384524017+12</text></value></field>
     <draw name="b" w="100pt" h="20pt"><value><text>B</text></value></draw></subform>`;
   const form = type => buildPdf({
-    1: '<< /Type /Catalog /Pages 2 0 R /NeedsRendering true /AcroForm << /Fields [] /XFA [(template) 6 0 R] >> >>',
+    1: `<< /Type /Catalog /Pages 2 0 R /NeedsRendering true /AcroForm << /Fields [] /XFA [(template) 6 0 R] >> >>`,
     2: '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
     3: '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] >>',
     6: { dict: '<< >>', stream: `<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/"><subform name="form1" layout="tb">
@@ -551,3 +552,55 @@ test('an Australia Post field: Reader\'s fixed bar size from the top-left, the v
   assert.ok(Math.abs(tx + 8 * 8 * 0.556 / 2 - (10 + width / 2)) < 0.5);
 });
 
+
+test("PDF417: Reader's text compaction, codeword for codeword (IMM 0008's ten paper forms barcodes)", () => {
+  const { symbols } = JSON.parse(readFileSync(new URL('../fixtures/imm0008-pdf417.json', import.meta.url), 'utf8'));
+  const inv = CLUSTERS.map(t => new Map(t.map((v, i) => [v.toString(2), i])));
+  const mm = v => v * 72 / 25.4;
+  for (const want of symbols) {
+    // a 95.25mm field at 0.338mm modules: 12 columns
+    const { s } = enc('pdf417', want.text, { errorCorrectionLevel: 5 }, { box: { w: mm(95.25), h: mm(50.8) - 8 }, moduleWidth: mm(0.338) });
+    assert.equal(s.modules.length, want.rows, want.text.slice(0, 17));
+    const cw = [];
+    s.modules.forEach((m, r) => {
+      const bits = Array.from(m).join('');
+      for (let i = 0; i < want.cols; i++) cw.push(inv[r % 3].get(bits.slice(34 + 17 * i, 51 + 17 * i)));
+    });
+    assert.deepEqual(cw, want.codewords, want.text.slice(0, 17));
+  }
+  // latches only, never shifts: "0008_" is ml 0 0 0 8 pl _ al ml…
+  const t = enc('pdf417', 'AB0_1x', { errorCorrectionLevel: 0, dataColumnCount: 2 }).s;
+  const row0 = Array.from(t.modules[0]).join('');
+  const first = [0, 1].map(i => inv[0].get(row0.slice(34 + 17 * i, 51 + 17 * i)));
+  // [length, 900], then AB = 0*30+1, ml 0 = 28*30+0, pl _ = 25*30+7, al ml = 29*30+28, 1 ll = 1*30+27, x pad = 23*30+29
+  const row1 = Array.from(t.modules[1]).join('');
+  const second = [0, 1].map(i => inv[1].get(row1.slice(34 + 17 * i, 51 + 17 * i)));
+  assert.deepEqual([...first, ...second], [first[0], 900, 1, 840]);
+});
+
+test('without usage rights for barcodes, a barcode whose value scripts set prints as a grey box', async () => {
+  const { barcodeRights } = await import('../../src/index.js');
+  const catalog = perms => buildPdf({
+    1: `<< /Type /Catalog /Pages 2 0 R ${perms} >>`,
+    2: '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    3: '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>',
+  });
+  const ur = form => `/Perms << /UR3 << /Type /Sig /Reference [<< /TransformMethod /UR3 /TransformParams << /Type /TransformParams /Form [${form}] /V /2.2 >> >>] >> >>`;
+  assert.equal(await barcodeRights(await parsePdf(catalog(''))), false);
+  assert.equal(await barcodeRights(await parsePdf(catalog(ur('/FillIn /BarcodePlaintext')))), true);
+  assert.equal(await barcodeRights(await parsePdf(catalog(ur('/FillIn')))), false);
+    // Without rights, Reader draws the value a barcode holds when the form
+  // opens (IMM 0008 saved after Validate: ten symbols) and prints a value
+  // scripts set in the session as a grey box (validated and printed at once)
+  const ev = js => `<event activity="initialize"><script contentType="application/x-javascript">${js}</script></event>`;
+  const stored = field('type="pdf417" errorCorrectionLevel="5"', 'IMM0008', ev('this.rawValue = "IMM" + "0008";'));
+  const live = field('type="pdf417" errorCorrectionLevel="5"', null, ev('this.rawValue = "IMM0008";'));
+  const grey = async (tpl, opts = {}, perms = '') => {
+    const { pdf, log } = await flattenXfa(xfaForm(tpl, { perms }), { fonts: null, ...opts });
+    return { box: /0\.5 0\.5 0\.5 rg/.test(await pageContent(pdf)), logged: log.entries.some(e => e.code === 'XFA_BARCODE_RIGHTS') };
+  };
+  assert.deepEqual(await grey(stored), { box: false, logged: false });
+  assert.deepEqual(await grey(live), { box: true, logged: true });
+  assert.deepEqual(await grey(live, {}, ur('/FillIn /BarcodePlaintext')), { box: false, logged: false });
+  assert.deepEqual(await grey(live, { barcodes: 'all' }), { box: false, logged: false });
+});

@@ -32,9 +32,9 @@ const CONTAINERS = new Set(['subform', 'subformSet', 'area', 'exclGroup', 'field
 // Script-bearing or interactive-only children. They are not modelled; their
 // presence is recorded where binding needs to know (calculate/initialize).
 const IGNORED = new Set([
-  'script', 'event', 'validate', 'assist', 'toolTip', 'speak', 'traversal',
+  'script', 'event', 'assist', 'toolTip', 'speak', 'traversal',
   'traverse', 'desc', 'extras', 'setProperty', 'connect', 'variables', 'proto',
-  'leader', 'trailer', 'bindItems', 'calculate',
+  'leader', 'trailer', 'calculate',
 ]);
 
 // properties an object has at most once
@@ -142,6 +142,11 @@ function parseContainer(el, ctx, parentType) {
       case 'caption':     node.caption = parseCaption(c, ctx); break;
       case 'value':       node.value = parseValue(c, ctx); break;
       case 'items':       (node.items ??= []).push(parseItems(c)); break;
+      // a choice list whose items come from data (xfa.datasets.LOVFile…[*]);
+      // bind.js builds the items from it, the first one counts
+      case 'bindItems':
+        if (attr(c, 'ref')) node.bindItems ??= { ref: attr(c, 'ref'), labelRef: attr(c, 'labelRef') ?? '$', valueRef: attr(c, 'valueRef') ?? '$' };
+        break;
       case 'format':      node.picture = pictureOf(c); break;
       case 'font':        node.font = parseFont(c, ctx); break;
       case 'para':        node.para = parsePara(c, ctx); break;
@@ -172,6 +177,21 @@ function parseContainer(el, ctx, parentType) {
         notePageRole(node, c);
         const script = parseScript(child(c, 'script'));
         if (script) node.calculate = script;
+        break;
+      }
+      // the validate script runs as Acrobat runs it on opening, after the
+      // calculations (IRCC forms set a dependant's heading in one); its
+      // result only decides a warning, so only what it does counts
+      case 'validate': {
+        const script = parseScript(child(c, 'script'));
+        if (script) node.validate = script;
+        // what scripts read of it: mandatory, and the messages they show
+        if (attr(c, 'nullTest')) node.nullTest = attr(c, 'nullTest');
+        const msg = child(c, 'message');
+        for (const t of msg ? elementChildren(msg) : []) {
+          const name = attr(t, 'name');
+          if (name === 'scriptTest' || name === 'formatTest' || name === 'nullTest') (node.validateMessages ??= {})[name] = t.textContent;
+        }
         break;
       }
       case 'event': {
@@ -368,7 +388,12 @@ function parseUi(el, ctx) {
   const b = child(widgetEl, 'border');
   if (b) ui.border = parseBorder(b, ctx);
   const m = child(widgetEl, 'margin');
-  if (m) ui.margin = parseMargin(m, ctx);
+  if (m) {
+    ui.margin = parseMargin(m, ctx);
+    // the insets the widget's margin leaves unset (widgetMargin)
+    const unset = ['topInset', 'rightInset', 'bottomInset', 'leftInset'].filter(a => attr(m, a) === null);
+    if (unset.length) ui.marginUnset = unset;
+  }
 
   switch (kind) {
     case 'textEdit': {
@@ -454,7 +479,12 @@ export function parseValue(el, ctx = { log: new XfaLog() }) {
   if (!c) return null;
   const tag = localName(c);
 
-  if (tag === 'text') return { kind: 'text', text: c.textContent };
+  if (tag === 'text') {
+    // maxChars: the most characters the field holds (Reader prints a longer
+    // value from data cut there)
+    const max = parseInt(attr(c, 'maxChars') ?? '0', 10);
+    return max > 0 ? { kind: 'text', text: c.textContent, maxChars: max } : { kind: 'text', text: c.textContent };
+  }
   if (VALUE_SCALARS.has(tag)) return { kind: 'text', text: c.textContent.trim(), valueType: tag };
 
   if (tag === 'exData') {
@@ -786,3 +816,29 @@ function child(el, name) {
   return null;
 }
 
+
+const SIDE_OF = { topInset: 'top', rightInset: 'right', bottomInset: 'bottom', leftInset: 'left' };
+/**
+ * A field's widget insets: its ui margin, where an inset is unset (an empty
+ * <margin/>) twice the thickness of the widget's visible border, as Reader
+ * insets the text of a widget whose border shows (IRCC IMM 5257's cells,
+ * given a 2pt red border by their validate scripts, print their text 4pt
+ * in from it and 5pt below and above it)
+ */
+export function widgetMargin(n) {
+  const ui = n.ui;
+  const m = ui?.margin;
+  if (!m) return null;
+  // a comb's cells fill the widget (Attestation's No ONSS prints its
+  // hyphen centred in its cell, as without the inset)
+  if (!ui.marginUnset || ui.comb > 0) return m;
+  const b = ui.border;
+  const edges = b && b.presence === 'visible' ? (b.edges ?? []).filter(e => e.presence === 'visible') : [];
+  const t = edges.length ? Math.max(...edges.map(e => e.thickness ?? 0)) : 0;
+  if (!(t > 0)) return m;
+  const out = { ...m };
+  // measured on Reader's prints of 2pt borders: the text 4pt in from the
+  // left edge, the box 2pt taller than the text and 4pt insets would need
+  for (const a of ui.marginUnset) out[SIDE_OF[a]] = (a === 'topInset' || a === 'bottomInset' ? 2.5 : 2) * t;
+  return out;
+}

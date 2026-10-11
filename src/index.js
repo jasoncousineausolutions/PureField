@@ -18,17 +18,18 @@ import { prepareFaces } from './core/faces.js';
 import { readFormFonts } from './core/formfonts.js';
 import { extractXfa } from './xfa/extractor.js';
 import { parseTemplateModel } from './xfa/model.js';
-import { bindData } from './xfa/bind.js';
+import { bindData, refreshBoundItems } from './xfa/bind.js';
 import { applyFormState } from './xfa/formstate.js';
-import { formatValues, displayValue } from './xfa/format.js';
+import { formatValues, displayValue, applyBindPictures } from './xfa/format.js';
 import { parseLocaleSet } from './xfa/picture.js';
 import { layoutForm } from './xfa/flow.js';
 import { paintPages } from './xfa/paint.js';
-import { dropReaderBarcodes } from './xfa/barcodes.js';
+import { dropReaderBarcodes, noteOpenBarcodes } from './xfa/barcodes.js';
 import { XfaLog } from './xfa/log.js';
 import { runScripts } from './xfa/script/run.js';
 import { flattenAcroForm, stampOp } from './acroform.js';
 import { collectWidgets } from './core/widgets.js';
+import { barcodeRights } from './core/rights.js';
 
 export { XfaLog, loadBundledFonts };
 export { inspectPdf } from './inspect.js';
@@ -137,12 +138,17 @@ async function flattenOne(input, options, depth) {
   // that asks the layout (xfa.layout.page(), a ready:$layout event…) gets
   // the answers of a first layout, the form being built again with them
   const build = (streams, tpl, known, buildLog) => {
-    const { root } = bindData(tpl, streams.dataRoot, { log: buildLog });
+    const { root } = bindData(tpl, streams.dataRoot, { log: buildLog, datasets: streams.datasets?.documentElement ?? null });
+    applyBindPictures(root, { locales, log: buildLog });
     // the saved form state is restored when the form opens; the scripts run
     // after it (prePrint scripts run at printing, long after the restore:
     // hmrc-c1800-chief shows every section it had saved hidden)
     applyFormState(root, streams.parseXml('form'), { log: buildLog });
+    // what each barcode field holds when the form opens: without usage
+    // rights Reader draws that, and only that (barcodes.js)
+    if (barcodes === 'reader') noteOpenBarcodes(root);
     const run = scripts ? runScripts(root, { record: streams.dataRoot, locales, log: buildLog, now, layout: known }) : null;
+    if (run) refreshBoundItems(root);
     formatValues(root, { log: buildLog, locales });
     if (barcodes === 'reader') dropReaderBarcodes(root, buildLog);
     return { root, run, ...layoutForm(root, { log: buildLog, fonts: faces, pageValues: run?.pageValues,
@@ -182,7 +188,8 @@ async function flattenOne(input, options, depth) {
 
   const glyphUsage = new Map();
   const extraGlyphs = new Map();
-  const painted = await paintPages(pages, { log, byId, overlay: !!imported, shells: imported?.pages, glyphUsage, extraGlyphs, xfaImages: xfa.images, labels, faces, resolveImage: images, barcodes });
+  const rights = barcodes === 'reader' ? await barcodeRights(doc) : true;
+  const painted = await paintPages(pages, { log, byId, overlay: !!imported, shells: imported?.pages, glyphUsage, extraGlyphs, xfaImages: xfa.images, labels, faces, resolveImage: images, barcodes, barcodeRights: rights });
   const embeddedFonts = await buildEmbeddedFonts(glyphUsage);
   if (imported) painted.forEach((p, i) => { p.base = imported.pages[i]; });
   // widget appearances preferred over the template (paint.js stamps)
@@ -241,6 +248,8 @@ async function stampSignatures(doc, pages, painted, log) {
 
 // ViewerPreferences entries that steer printing, as catalog source: page
 // scaling, duplex, tray by page size, copies and page ranges
+export { barcodeRights };
+
 export async function printPreferences(doc) {
   const get = async v => (v?.type === 'ref' ? (await doc.getObject(v.num))?.value ?? null : v);
   const cat = (await doc.catalog())?.value?.value ?? {};

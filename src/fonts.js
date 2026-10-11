@@ -38,6 +38,12 @@ export async function addScriptFaces(faces, text, log, load = loadBundledFont) {
       log?.warn?.('FONT_SCRIPTS', `no face for Arabic, Hebrew or other alphabets (${e.message})`);
     }
   }
+  if (need.extended && !faces.mono && faces.addMono) {
+    try {
+      const [r, b] = await Promise.all([load('LiberationMono-Regular'), load('LiberationMono-Bold')]);
+      faces.addMono(r, b);
+    } catch { /* none: such Courier text is drawn with Liberation Sans */ }
+  }
   if (need.cjk && !faces.cjkEmbedded) {
     // a CJK TrueType font supplied as "CJK" (fonts/CJK.ttf, or load('CJK')) is embedded
     try { faces.addCjk(await load('CJK')); } catch { /* none: the standard CJK fonts */ }

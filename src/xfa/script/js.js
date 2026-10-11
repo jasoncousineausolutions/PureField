@@ -790,6 +790,12 @@ const REGEXP_METHODS = nativeMethods({
   test: (r, [s]) => r.test(toStr(s)),
   exec: (r, [s]) => r.exec(toStr(s)),
   toString: r => String(r),
+  // the old in-place recompile (Annex B), which IRCC forms use
+  compile: (r, [p, f]) => {
+    try { r.compile(p instanceof RegExp ? p.source : toStr(p ?? ''), f === undefined ? undefined : toStr(f)); }
+    catch (e) { throw jsError('SyntaxError', e.message); }
+    return r;
+  },
 });
 
 const OBJECT_METHODS = nativeMethods({
@@ -815,6 +821,7 @@ const NODE_METHODS = new Set([
   'setItems', 'deleteItem', 'getItemState', 'setItemState', 'clone', 'createNode', 'loadXML', 'saveXML',
   'applyXSL', 'assignNode', 'removeChild', 'appendChild', 'insert', 'remove', 'getElement', 'setElement',
   'getItemState', 'setItemState', 'deleteItem', 'setItems', 'selectedMember', 'evaluate', 'formNodes',
+  'message', 'trace', 'getDeltas',
 ]);
 
 function makeGlobals(interp) {
@@ -948,6 +955,10 @@ function printd(fmt, d) {
 // ---------------------------------------------------------------------------
 // Interpreter
 // ---------------------------------------------------------------------------
+
+// Acrobat's host objects (not the language's built-ins): a script object of
+// the same name takes their place
+const HOST_OBJECTS = new Set(['app', 'util', 'console', 'zoomtype']);
 
 class BreakSignal {}
 class ContinueSignal {}
@@ -1260,6 +1271,12 @@ class Interpreter {
 
   tryLookup(name, env, ctx) {
     const scope = env.lookup(name);
+    // a form's script object named as one of Acrobat's host objects hides
+    // it, as in Acrobat (IRCC forms call their own util.trim())
+    if (scope === this.globals && HOST_OBJECTS.has(name)) {
+      const own = this.dom.lookup(name, ctx.somScope).find(h => h instanceof ScriptObjectRef);
+      if (own) return { found: true, value: own };
+    }
     if (scope) return { found: true, value: scope.vars.get(name) };
     // SOM shortcuts are names in Acrobat's JavaScript too ($, $record, …)
     if (name[0] === '$') {
@@ -1536,9 +1553,10 @@ class ScriptObjectRef {
     try {
       ast = parseJavaScript(this.script.text);
     } catch (e) {
-      this.failed = true;
-      this.value = null;
-      throw e instanceof ScriptError ? e : new ScriptError(`Script object ${this.name}: ${describeThrown(e)}`);
+      // not JavaScript (IRCC forms keep their lists' XML in a <script>):
+      // the script node itself, whose value is its text (LOV.value)
+      this.value = new NamedValue(this.name, this.script.text);
+      return this.value;
     }
     try {
       interp.runProgram(ast, this.value, owner, env);
